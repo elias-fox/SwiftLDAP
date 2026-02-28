@@ -1,3 +1,9 @@
+dn: dc=example,dc=org
+objectClass: dcObject
+objectClass: organization
+dc: example
+o: Example Company
+
 dn: ou=people,dc=example,dc=org
 objectClass: organizationalUnit
 ou: people
