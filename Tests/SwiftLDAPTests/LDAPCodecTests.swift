@@ -21,12 +21,8 @@ struct LDAPCodecTests {
         // Verify it's a valid SEQUENCE
         #expect(bytes[0] == 0x30) // SEQUENCE tag
 
-        // Decode it back
-        let (msgID, op, _) = try LDAPCodec.decode(bytes)
-        #expect(msgID == 1)
-
-        // The codec decodes responses, not requests, so we verify the raw encoding
-        // by checking the structure manually
+        // The codec only decodes responses (server→client), so verify the
+        // request encoding by manually parsing the BER structure.
         var outer = BERDecoder(data: bytes)
         var seq = try outer.readSequence()
         let id = try seq.readInt32()
