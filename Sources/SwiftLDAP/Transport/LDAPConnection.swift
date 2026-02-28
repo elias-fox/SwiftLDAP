@@ -11,6 +11,11 @@ public struct LDAPConnectionConfig: Sendable {
     public let port: UInt16
     /// The security mode for the connection.
     public let security: LDAPSecurityMode
+    /// Whether to verify the server's TLS certificate chain.
+    ///
+    /// Set to `false` only for testing with self-signed certificates.
+    /// Defaults to `true`.
+    public let tlsVerifyPeer: Bool
     /// Connection timeout in seconds.
     public let connectTimeout: TimeInterval
     /// Read/write timeout in seconds.
@@ -20,12 +25,14 @@ public struct LDAPConnectionConfig: Sendable {
         host: String,
         port: UInt16? = nil,
         security: LDAPSecurityMode = .none,
+        tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
         operationTimeout: TimeInterval = 60
     ) {
         self.host = host
         self.port = port ?? (security == .ldaps ? 636 : 389)
         self.security = security
+        self.tlsVerifyPeer = tlsVerifyPeer
         self.connectTimeout = connectTimeout
         self.operationTimeout = operationTimeout
     }
@@ -53,6 +60,11 @@ private final class StreamTransport: @unchecked Sendable {
     private var outputStream: OutputStream?
     private let readQueue = DispatchQueue(label: "SwiftLDAP.StreamTransport.read")
     private let writeQueue = DispatchQueue(label: "SwiftLDAP.StreamTransport.write")
+    private let verifyPeer: Bool
+
+    init(verifyPeer: Bool = true) {
+        self.verifyPeer = verifyPeer
+    }
 
     // MARK: - Connection
 
@@ -74,7 +86,7 @@ private final class StreamTransport: @unchecked Sendable {
         }
 
         if enableTLS {
-            Self.applyTLSSettings(input: input, output: output, peerName: host)
+            Self.applyTLSSettings(input: input, output: output, peerName: host, verifyPeer: verifyPeer)
         }
 
         input.open()
@@ -96,7 +108,7 @@ private final class StreamTransport: @unchecked Sendable {
         guard let input = inputStream, let output = outputStream else {
             throw LDAPError.notConnected
         }
-        Self.applyTLSSettings(input: input, output: output, peerName: peerName)
+        Self.applyTLSSettings(input: input, output: output, peerName: peerName, verifyPeer: verifyPeer)
         #else
         throw LDAPError.tlsError("TLS not available on this platform")
         #endif
@@ -235,11 +247,16 @@ private final class StreamTransport: @unchecked Sendable {
     /// handshake on the underlying socket (used by StartTLS). When called
     /// before `open()`, TLS is negotiated as part of opening (used by LDAPS).
     private static func applyTLSSettings(
-        input: InputStream, output: OutputStream, peerName: String
+        input: InputStream, output: OutputStream, peerName: String, verifyPeer: Bool
     ) {
-        let settings: [String: Any] = [
+        var settings: [String: Any] = [
             kCFStreamSSLPeerName as String: peerName,
         ]
+        if !verifyPeer {
+            // Disable certificate chain validation (for self-signed certs in test environments).
+            // The raw string is used because the constant is deprecated; the value is identical.
+            settings["kCFStreamSSLValidatesCertificateChain"] = false
+        }
         let key = Stream.PropertyKey(rawValue: kCFStreamPropertySSLSettings as String)
         input.setProperty(settings, forKey: key)
         output.setProperty(settings, forKey: key)
@@ -283,7 +300,7 @@ actor LDAPConnection {
 
     init(config: LDAPConnectionConfig) {
         self.config = config
-        self.transport = StreamTransport()
+        self.transport = StreamTransport(verifyPeer: config.tlsVerifyPeer)
     }
 
     // MARK: - Connection Lifecycle

@@ -22,5 +22,11 @@ let package = Package(
             name: "SwiftLDAPTests",
             dependencies: ["SwiftLDAP"]
         ),
+        .testTarget(
+            name: "IntegrationTests",
+            dependencies: ["SwiftLDAP"],
+            path: "Tests/IntegrationTests",
+            exclude: ["Fixtures"]
+        ),
     ]
 )

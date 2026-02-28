@@ -46,12 +46,15 @@ public actor LDAPClient {
     ///   - host: The LDAP server hostname.
     ///   - port: The port number (defaults to 389 for `.none`/`.startTLS`, 636 for `.ldaps`).
     ///   - security: The security mode (default: `.none`).
+    ///   - tlsVerifyPeer: Whether to verify the server's certificate chain (default: `true`).
+    ///     Set to `false` only for testing with self-signed certificates.
     ///   - connectTimeout: Connection timeout in seconds.
     ///   - operationTimeout: Per-operation timeout in seconds.
     public init(
         host: String,
         port: UInt16? = nil,
         security: LDAPSecurityMode = .none,
+        tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
         operationTimeout: TimeInterval = 60
     ) {
@@ -59,6 +62,7 @@ public actor LDAPClient {
             host: host,
             port: port,
             security: security,
+            tlsVerifyPeer: tlsVerifyPeer,
             connectTimeout: connectTimeout,
             operationTimeout: operationTimeout
         )
