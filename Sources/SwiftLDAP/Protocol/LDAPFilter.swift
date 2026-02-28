@@ -472,7 +472,7 @@ private struct FilterParser {
     /// Decodes RFC 4515 escaped values (e.g., `\2a` → `*`).
     private func decodeFilterValue(_ string: String) -> Data {
         var bytes: [UInt8] = []
-        var chars = Array(string)
+        let chars = Array(string)
         var i = 0
         while i < chars.count {
             if chars[i] == "\\" && i + 2 < chars.count {
