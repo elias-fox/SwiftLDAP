@@ -330,20 +330,30 @@ actor LDAPConnection {
 
     /// Reads a single complete BER-encoded LDAP message from the connection.
     ///
-    /// This method handles the framing: it reads enough bytes to determine the
-    /// tag and length, then reads the full content before returning.
+    /// This method handles the framing: it progressively buffers enough data
+    /// to parse the tag and length field, then reads the full content.
     func receiveMessage() async throws -> [UInt8] {
-        // We need to read a complete TLV (Tag-Length-Value).
-        // Step 1: Read the tag byte.
-        try await ensureBuffered(minBytes: 2) // At least tag + 1 byte of length
+        // Step 1: Buffer at least tag byte + first length byte.
+        try await ensureBuffered(minBytes: 2)
 
-        // Step 2: Determine total message length.
-        let totalLength = try peekMessageLength()
+        // Step 2: If the length uses long form, buffer the remaining length bytes.
+        let firstLengthByte = readBuffer[1]
+        if firstLengthByte & 0x80 != 0 {
+            let numLengthBytes = Int(firstLengthByte & 0x7F)
+            guard numLengthBytes > 0 else {
+                throw LDAPError.protocolError("Indefinite length not supported")
+            }
+            // 1 (tag) + 1 (first length byte) + numLengthBytes
+            try await ensureBuffered(minBytes: 2 + numLengthBytes)
+        }
 
-        // Step 3: Ensure we have the full message.
+        // Step 3: All length bytes are now buffered; compute total message length.
+        let totalLength = peekMessageLength()
+
+        // Step 4: Buffer the full message content.
         try await ensureBuffered(minBytes: totalLength)
 
-        // Step 4: Extract the message.
+        // Step 5: Extract the message.
         let message = Array(readBuffer.prefix(totalLength))
         readBuffer.removeFirst(totalLength)
         return message
@@ -351,32 +361,24 @@ actor LDAPConnection {
 
     // MARK: - BER Framing
 
-    /// Peeks at the buffered data to determine the total length of the next
-    /// BER message (tag + length field + content).
-    private func peekMessageLength() throws -> Int {
-        guard readBuffer.count >= 2 else {
-            throw LDAPError.protocolError("Insufficient data for message header")
-        }
-
+    /// Computes the total length of the next BER message in the buffer
+    /// (tag + length field + content bytes).
+    ///
+    /// Callers must ensure enough bytes are buffered for the tag and the
+    /// complete length field before calling this method.
+    private func peekMessageLength() -> Int {
         var offset = 1 // Skip tag byte
 
-        // Read the length
         let firstLengthByte = readBuffer[offset]
         offset += 1
 
         let contentLength: Int
         if firstLengthByte & 0x80 == 0 {
-            // Short form
+            // Short form: length is in the low 7 bits.
             contentLength = Int(firstLengthByte)
         } else {
+            // Long form: first byte tells how many subsequent bytes encode the length.
             let numLengthBytes = Int(firstLengthByte & 0x7F)
-            guard numLengthBytes > 0 else {
-                throw LDAPError.protocolError("Indefinite length not supported")
-            }
-            let needed = offset + numLengthBytes
-            guard readBuffer.count >= needed else {
-                return readBuffer.count + numLengthBytes
-            }
             var length = 0
             for i in 0..<numLengthBytes {
                 length = (length << 8) | Int(readBuffer[offset + i])
