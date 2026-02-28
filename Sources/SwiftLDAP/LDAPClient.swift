@@ -734,7 +734,7 @@ public actor LDAPClient {
     }
 
     private func throwIfError(_ result: LDAPResult) throws {
-        guard result.resultCode == .success else {
+        guard result.resultCode == .success || result.resultCode == .sizeLimitExceeded else {
             throw LDAPError.serverError(
                 resultCode: result.resultCode,
                 diagnosticMessage: result.diagnosticMessage,
