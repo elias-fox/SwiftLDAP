@@ -147,24 +147,41 @@ struct LDAPModelTests {
 
     // MARK: - LDAPConnectionConfig
 
-    @Test("Connection config defaults")
+    @Test("Connection config defaults to plain LDAP on port 389")
     func connectionConfigDefaults() {
         let config = LDAPConnectionConfig(host: "ldap.example.com")
         #expect(config.host == "ldap.example.com")
         #expect(config.port == 389)
-        #expect(config.useTLS == false)
+        #expect(config.security == .none)
     }
 
-    @Test("Connection config with TLS defaults to port 636")
-    func connectionConfigTLS() {
-        let config = LDAPConnectionConfig(host: "ldap.example.com", useTLS: true)
+    @Test("Connection config with LDAPS defaults to port 636")
+    func connectionConfigLDAPS() {
+        let config = LDAPConnectionConfig(host: "ldap.example.com", security: .ldaps)
         #expect(config.port == 636)
-        #expect(config.useTLS == true)
+        #expect(config.security == .ldaps)
     }
 
-    @Test("Connection config custom port")
+    @Test("Connection config with StartTLS defaults to port 389")
+    func connectionConfigStartTLS() {
+        let config = LDAPConnectionConfig(host: "ldap.example.com", security: .startTLS)
+        #expect(config.port == 389)
+        #expect(config.security == .startTLS)
+    }
+
+    @Test("Connection config custom port overrides default")
     func connectionConfigCustomPort() {
-        let config = LDAPConnectionConfig(host: "ldap.example.com", port: 1389)
+        let config = LDAPConnectionConfig(host: "ldap.example.com", port: 1389, security: .ldaps)
         #expect(config.port == 1389)
+        #expect(config.security == .ldaps)
+    }
+
+    // MARK: - LDAPSecurityMode
+
+    @Test("Security modes are distinct")
+    func securityModes() {
+        #expect(LDAPSecurityMode.none != .startTLS)
+        #expect(LDAPSecurityMode.none != .ldaps)
+        #expect(LDAPSecurityMode.startTLS != .ldaps)
     }
 }

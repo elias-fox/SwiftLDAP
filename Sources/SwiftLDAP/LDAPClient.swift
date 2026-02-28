@@ -3,12 +3,25 @@ import Foundation
 /// A pure-Swift LDAP client with async/await support.
 ///
 /// Implements the LDAPv3 protocol (RFC 4511) over TCP with optional TLS.
-/// Works on both iOS and macOS using Network.framework.
+/// Works on both iOS and macOS.
+///
+/// The client supports three security modes:
+/// - **No TLS**: Plain-text connection (`.none`).
+/// - **LDAPS**: TLS from the start on port 636 (`.ldaps`).
+/// - **StartTLS**: Plain connection on port 389, upgraded to TLS via the
+///   StartTLS extended operation (`.startTLS`). The upgrade happens
+///   automatically during `connect()`.
 ///
 /// ## Usage
 /// ```swift
-/// let client = LDAPClient(host: "ldap.example.com")
+/// // LDAPS (TLS from the start)
+/// let client = LDAPClient(host: "ldap.example.com", security: .ldaps)
 /// try await client.connect()
+///
+/// // StartTLS (upgrade existing connection)
+/// let client = LDAPClient(host: "ldap.example.com", security: .startTLS)
+/// try await client.connect() // automatically negotiates StartTLS
+///
 /// try await client.simpleBind(dn: "cn=admin,dc=example,dc=com", password: "secret")
 ///
 /// let entries = try await client.search(
@@ -31,21 +44,21 @@ public actor LDAPClient {
     ///
     /// - Parameters:
     ///   - host: The LDAP server hostname.
-    ///   - port: The port number (defaults to 389/636 based on TLS).
-    ///   - useTLS: Whether to use LDAPS (TLS from the start).
+    ///   - port: The port number (defaults to 389 for `.none`/`.startTLS`, 636 for `.ldaps`).
+    ///   - security: The security mode (default: `.none`).
     ///   - connectTimeout: Connection timeout in seconds.
     ///   - operationTimeout: Per-operation timeout in seconds.
     public init(
         host: String,
         port: UInt16? = nil,
-        useTLS: Bool = false,
+        security: LDAPSecurityMode = .none,
         connectTimeout: TimeInterval = 30,
         operationTimeout: TimeInterval = 60
     ) {
         self.config = LDAPConnectionConfig(
             host: host,
             port: port,
-            useTLS: useTLS,
+            security: security,
             connectTimeout: connectTimeout,
             operationTimeout: operationTimeout
         )
@@ -61,8 +74,17 @@ public actor LDAPClient {
     // MARK: - Connection
 
     /// Connects to the LDAP server.
+    ///
+    /// For `.ldaps` mode, TLS is negotiated as part of the TCP connection.
+    /// For `.startTLS` mode, a plain TCP connection is established first,
+    /// then the StartTLS extended operation is sent to upgrade the connection
+    /// to TLS in-place before returning.
     public func connect() async throws {
         try await connection.connect()
+
+        if config.security == .startTLS {
+            try await startTLS()
+        }
     }
 
     /// Disconnects from the LDAP server.
