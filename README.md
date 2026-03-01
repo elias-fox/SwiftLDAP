@@ -10,7 +10,7 @@ My process was:
 
 It's definitely over-commented and over-engineered, but it seems to work. Use at your own risk, but if you see an issue feel free to submit a PR.
 
-EVERYTHING BELOW IS CLAUDE
+EVERYTHING BELOW IS CLAUDE OPUS 4.6
 
 # SwiftLDAP
 
