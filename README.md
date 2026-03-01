@@ -1,3 +1,17 @@
+# DISCLAIMER
+
+This is mostly vibe coded, with some manual changes from myself to handle certain issues.
+
+My process was:
+
+1. Direct the LLM to focus on implementing the actual spec (so Claude went and named dropped the RFCs whereever it could; I think it's showing off)
+2. Once the initial package was completed, sanity check the unit tests to ensure they're testing what they claim and that they pass
+3. Generate an integration test suite against an openldap instance for objective measurements (once again, sanity checks)
+
+It's definitely over-commented and over-engineered, but it seems to work. Use at your own risk, but if you see an issue feel free to submit a PR.
+
+EVERYTHING BELOW IS CLAUDE
+
 # SwiftLDAP
 
 A pure-Swift LDAPv3 client with async/await support. No external dependencies — built entirely on Foundation.
