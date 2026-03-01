@@ -10,6 +10,11 @@ import Foundation
 /// Per RFC 4511 §4.2.
 public enum LDAPCodec {
 
+    // MARK: - Limits
+
+    private static let maxReferrals = 100
+    private static let maxControls = 100
+
     // MARK: - Encoding
 
     /// Encodes a complete LDAP message.
@@ -272,6 +277,9 @@ public enum LDAPCodec {
                 var refDecoder = refElement.constructedDecoder()
                 while refDecoder.hasMore {
                     referrals.append(try refDecoder.readString())
+                    guard referrals.count <= maxReferrals else {
+                        throw BERDecodingError.invalidData("Too many referrals")
+                    }
                 }
             }
         }
@@ -304,6 +312,9 @@ public enum LDAPCodec {
                 var refDecoder = refElement.constructedDecoder()
                 while refDecoder.hasMore {
                     referrals.append(try refDecoder.readString())
+                    guard referrals.count <= maxReferrals else {
+                        throw BERDecodingError.invalidData("Too many referrals")
+                    }
                 }
             } else if nextTag == .contextSpecific(7) {
                 let credsElement = try decoder.readElement()
@@ -353,6 +364,9 @@ public enum LDAPCodec {
         var uris: [String] = []
         while decoder.hasMore {
             uris.append(try decoder.readString())
+            guard uris.count <= maxReferrals else {
+                throw BERDecodingError.invalidData("Too many referrals")
+            }
         }
         return .searchResultReference(uris)
     }
@@ -374,6 +388,9 @@ public enum LDAPCodec {
                 var refDecoder = refElement.constructedDecoder()
                 while refDecoder.hasMore {
                     referrals.append(try refDecoder.readString())
+                    guard referrals.count <= maxReferrals else {
+                        throw BERDecodingError.invalidData("Too many referrals")
+                    }
                 }
             } else if nextTag == .contextSpecific(10) {
                 let oidElement = try decoder.readElement()
@@ -443,6 +460,9 @@ public enum LDAPCodec {
             }
 
             controls.append(LDAPControl(oid: oid, criticality: criticality, value: value))
+            guard controls.count <= maxControls else {
+                throw BERDecodingError.invalidData("Too many controls")
+            }
         }
         return controls
     }

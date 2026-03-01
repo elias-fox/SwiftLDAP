@@ -165,6 +165,8 @@ extension LDAPFilter {
 extension LDAPFilter {
     /// Maximum allowed filter nesting depth to prevent stack overflow.
     fileprivate static let maxFilterDepth = 32
+    /// Maximum allowed children per AND/OR filter to prevent memory exhaustion.
+    fileprivate static let maxFilterChildren = 1000
 
     /// Decodes a filter from a BER element.
     public static func decode(from element: BERElement) throws -> LDAPFilter {
@@ -186,6 +188,9 @@ extension LDAPFilter {
             while sub.hasMore {
                 let child = try sub.readElement()
                 filters.append(try LDAPFilter.decode(from: child, depth: depth + 1))
+                guard filters.count <= maxFilterChildren else {
+                    throw BERDecodingError.invalidData("Filter has too many children")
+                }
             }
             return .and(filters)
 
@@ -195,6 +200,9 @@ extension LDAPFilter {
             while sub.hasMore {
                 let child = try sub.readElement()
                 filters.append(try LDAPFilter.decode(from: child, depth: depth + 1))
+                guard filters.count <= maxFilterChildren else {
+                    throw BERDecodingError.invalidData("Filter has too many children")
+                }
             }
             return .or(filters)
 
@@ -346,6 +354,9 @@ private struct FilterParser {
         var filters: [LDAPFilter] = []
         while !isAtEnd && chars[index] == "(" {
             filters.append(try parseFilter(depth: depth + 1))
+            guard filters.count <= LDAPFilter.maxFilterChildren else {
+                throw LDAPError.invalidFilter("Filter has too many children")
+            }
         }
         if filters.isEmpty {
             throw LDAPError.invalidFilter("Filter list must contain at least one filter")

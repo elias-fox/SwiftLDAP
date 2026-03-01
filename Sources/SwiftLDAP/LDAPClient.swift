@@ -49,13 +49,15 @@ public actor LDAPClient {
     ///     Set to `false` only for testing with self-signed certificates.
     ///   - connectTimeout: Connection timeout in seconds.
     ///   - operationTimeout: Per-operation timeout in seconds.
+    ///   - maxSearchEntries: Maximum number of entries `search()` will accumulate (0 = no limit).
     public init(
         host: String,
         port: UInt16? = nil,
         security: LDAPSecurityMode = .startTLS,
         tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
-        operationTimeout: TimeInterval = 60
+        operationTimeout: TimeInterval = 60,
+        maxSearchEntries: Int = 0
     ) {
         self.config = LDAPConnectionConfig(
             host: host,
@@ -63,7 +65,8 @@ public actor LDAPClient {
             security: security,
             tlsVerifyPeer: tlsVerifyPeer,
             connectTimeout: connectTimeout,
-            operationTimeout: operationTimeout
+            operationTimeout: operationTimeout,
+            maxSearchEntries: maxSearchEntries
         )
         self.connection = LDAPConnection(config: self.config)
     }
@@ -240,6 +243,12 @@ public actor LDAPClient {
             switch operation {
             case .searchResultEntry(let entry):
                 entries.append(entry)
+                if sizeLimit > 0 && entries.count >= sizeLimit {
+                    return entries
+                }
+                if config.maxSearchEntries > 0 && entries.count > config.maxSearchEntries {
+                    throw LDAPError.protocolError("Search result count exceeds client limit")
+                }
             case .searchResultReference:
                 // Skip referrals for now; could be exposed via a callback.
                 continue

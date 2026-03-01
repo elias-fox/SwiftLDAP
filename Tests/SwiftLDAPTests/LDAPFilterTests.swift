@@ -270,4 +270,63 @@ struct LDAPFilterTests {
         let decoded = try LDAPFilter.decode(from: element)
         #expect(decoded == filter)
     }
+
+    // MARK: - Security Guards
+
+    @Test("Throws on AND filter with too many children via BER decode")
+    func berDecodeAndFilterBreadthOverflow() throws {
+        // Build a BER AND filter ([0] constructed) with 1001 presence children.
+        var filterEncoder = BEREncoder()
+        filterEncoder.writeSequence(tag: .contextSpecificConstructed(0)) { andFilter in
+            for _ in 0..<1001 {
+                andFilter.writeOctetString("cn", tag: .contextSpecific(7)) // presence filter
+            }
+        }
+        let bytes = filterEncoder.finish()
+        var decoder = BERDecoder(data: bytes)
+        let element = try decoder.readElement()
+        #expect(throws: BERDecodingError.self) {
+            try LDAPFilter.decode(from: element)
+        }
+    }
+
+    @Test("Throws on OR filter with too many children via BER decode")
+    func berDecodeOrFilterBreadthOverflow() throws {
+        var filterEncoder = BEREncoder()
+        filterEncoder.writeSequence(tag: .contextSpecificConstructed(1)) { orFilter in
+            for _ in 0..<1001 {
+                orFilter.writeOctetString("cn", tag: .contextSpecific(7))
+            }
+        }
+        let bytes = filterEncoder.finish()
+        var decoder = BERDecoder(data: bytes)
+        let element = try decoder.readElement()
+        #expect(throws: BERDecodingError.self) {
+            try LDAPFilter.decode(from: element)
+        }
+    }
+
+    @Test("Throws on AND filter with too many children via string parser")
+    func parseAndFilterBreadthOverflow() {
+        var filter = "(&"
+        for i in 0..<1001 {
+            filter += "(a=\(i))"
+        }
+        filter += ")"
+        #expect(throws: LDAPError.self) {
+            try LDAPFilter.parse(filter)
+        }
+    }
+
+    @Test("Throws on OR filter with too many children via string parser")
+    func parseOrFilterBreadthOverflow() {
+        var filter = "(|"
+        for i in 0..<1001 {
+            filter += "(a=\(i))"
+        }
+        filter += ")"
+        #expect(throws: LDAPError.self) {
+            try LDAPFilter.parse(filter)
+        }
+    }
 }
