@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+.certs/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
