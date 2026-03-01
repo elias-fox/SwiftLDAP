@@ -230,7 +230,7 @@ Filters can be built with static helpers or parsed from RFC 4515 strings.
 ### Parsing Filter Strings
 
 ```swift
-let filter = try LDAPFilter.parse("(&(objectClass=person)(|(cn=John*)(mail=*@example.com)))")
+let filter = try LDAPFilter("(&(objectClass=person)(|(cn=John*)(mail=*@example.com)))")
 ```
 
 ## Modifying Data
