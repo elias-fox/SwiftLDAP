@@ -157,11 +157,11 @@ struct SearchTests {
             baseDN: peopleDN,
             filter: .and([
                 .equal("objectClass", "inetOrgPerson"),
-                .equal("sn", "Doe"),
+                .equal("sn", "Smith"),
             ])
         )
         #expect(entries.count == 1)
-        #expect(entries[0].firstValue(for: "cn") == "John Doe")
+        #expect(entries[0].firstValue(for: "cn") == "Jane Smith")
         try await client.unbind()
     }
 
@@ -295,7 +295,7 @@ struct MutationTests {
             attributes: [
                 LDAPAttribute(type: "objectClass", stringValues: ["inetOrgPerson"]),
                 LDAPAttribute(type: "cn", stringValues: ["Integration Test User"]),
-                LDAPAttribute(type: "sn", stringValues: ["User"]),
+                LDAPAttribute(type: "sn", stringValues: ["Doe"]),
                 LDAPAttribute(type: "mail", stringValues: ["test@example.org"]),
             ]
         )
@@ -369,7 +369,7 @@ struct MutationTests {
             attributes: [
                 LDAPAttribute(type: "objectClass", stringValues: ["inetOrgPerson"]),
                 LDAPAttribute(type: "cn", stringValues: ["Rename Me"]),
-                LDAPAttribute(type: "sn", stringValues: ["Me"]),
+                LDAPAttribute(type: "sn", stringValues: ["Doe"]),
             ]
         )
 
