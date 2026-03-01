@@ -160,11 +160,26 @@ extension LDAPFilter {
     }
 }
 
+// MARK: - Filter Depth Limit
+
+/// Maximum allowed filter nesting depth to prevent stack overflow.
+private let _maxFilterDepth = 32
+
 // MARK: - Filter BER Decoding
 
 extension LDAPFilter {
+    private static var maxFilterDepth: Int { _maxFilterDepth }
+
     /// Decodes a filter from a BER element.
     public static func decode(from element: BERElement) throws -> LDAPFilter {
+        try decode(from: element, depth: 0)
+    }
+
+    private static func decode(from element: BERElement, depth: Int) throws -> LDAPFilter {
+        guard depth < maxFilterDepth else {
+            throw LDAPError.invalidFilter("Filter nesting exceeds maximum depth of \(maxFilterDepth)")
+        }
+
         let tag = element.tag
         let tagNumber = tag.tagNumber
 
@@ -174,7 +189,7 @@ extension LDAPFilter {
             var filters: [LDAPFilter] = []
             while sub.hasMore {
                 let child = try sub.readElement()
-                filters.append(try LDAPFilter.decode(from: child))
+                filters.append(try LDAPFilter.decode(from: child, depth: depth + 1))
             }
             return .and(filters)
 
@@ -183,14 +198,14 @@ extension LDAPFilter {
             var filters: [LDAPFilter] = []
             while sub.hasMore {
                 let child = try sub.readElement()
-                filters.append(try LDAPFilter.decode(from: child))
+                filters.append(try LDAPFilter.decode(from: child, depth: depth + 1))
             }
             return .or(filters)
 
         case (.contextSpecific, true, 2): // NOT
             var sub = element.constructedDecoder()
             let child = try sub.readElement()
-            return .not(try LDAPFilter.decode(from: child))
+            return .not(try LDAPFilter.decode(from: child, depth: depth + 1))
 
         case (.contextSpecific, true, 3): // equalityMatch
             let (attr, value) = try decodeAttributeValueAssertion(element)
@@ -279,7 +294,7 @@ extension LDAPFilter {
     /// - `(!(userAccountControl:1.2.840.113556.1.4.803:=2))`
     public static func parse(_ string: String) throws -> LDAPFilter {
         var parser = FilterParser(string)
-        let filter = try parser.parseFilter()
+        let filter = try parser.parseFilter(depth: 0)
         guard parser.isAtEnd else {
             throw LDAPError.invalidFilter("Unexpected trailing content: \(parser.remaining)")
         }
@@ -302,36 +317,39 @@ private struct FilterParser {
 
     // MARK: - Parsing
 
-    mutating func parseFilter() throws -> LDAPFilter {
+    mutating func parseFilter(depth: Int) throws -> LDAPFilter {
+        guard depth < _maxFilterDepth else {
+            throw LDAPError.invalidFilter("Filter nesting exceeds maximum depth of \(_maxFilterDepth)")
+        }
         try expect("(")
-        let filter = try parseFilterComp()
+        let filter = try parseFilterComp(depth: depth)
         try expect(")")
         return filter
     }
 
-    private mutating func parseFilterComp() throws -> LDAPFilter {
+    private mutating func parseFilterComp(depth: Int) throws -> LDAPFilter {
         guard !isAtEnd else {
             throw LDAPError.invalidFilter("Unexpected end of filter")
         }
         switch chars[index] {
         case "&":
             index += 1
-            return try .and(parseFilterList())
+            return try .and(parseFilterList(depth: depth))
         case "|":
             index += 1
-            return try .or(parseFilterList())
+            return try .or(parseFilterList(depth: depth))
         case "!":
             index += 1
-            return try .not(parseFilter())
+            return try .not(parseFilter(depth: depth + 1))
         default:
             return try parseItem()
         }
     }
 
-    private mutating func parseFilterList() throws -> [LDAPFilter] {
+    private mutating func parseFilterList(depth: Int) throws -> [LDAPFilter] {
         var filters: [LDAPFilter] = []
         while !isAtEnd && chars[index] == "(" {
-            filters.append(try parseFilter())
+            filters.append(try parseFilter(depth: depth + 1))
         }
         if filters.isEmpty {
             throw LDAPError.invalidFilter("Filter list must contain at least one filter")

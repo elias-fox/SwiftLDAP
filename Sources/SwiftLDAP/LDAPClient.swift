@@ -45,7 +45,7 @@ public actor LDAPClient {
     /// - Parameters:
     ///   - host: The LDAP server hostname.
     ///   - port: The port number (defaults to 389 for `.none`/`.startTLS`, 636 for `.ldaps`).
-    ///   - security: The security mode (default: `.none`).
+    ///   - security: The security mode (default: `.startTLS`).
     ///   - tlsVerifyPeer: Whether to verify the server's certificate chain (default: `true`).
     ///     Set to `false` only for testing with self-signed certificates.
     ///   - connectTimeout: Connection timeout in seconds.
@@ -53,7 +53,7 @@ public actor LDAPClient {
     public init(
         host: String,
         port: UInt16? = nil,
-        security: LDAPSecurityMode = .none,
+        security: LDAPSecurityMode = .startTLS,
         tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
         operationTimeout: TimeInterval = 60
@@ -120,8 +120,7 @@ public actor LDAPClient {
             )
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -164,8 +163,7 @@ public actor LDAPClient {
             )
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -389,8 +387,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -428,8 +425,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -465,8 +461,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -511,8 +506,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -555,8 +549,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -618,8 +611,7 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-        let responseData = try await connection.receiveMessage()
+        let responseData = try await sendAndReceive(requestBytes)
 
         let (respID, operation, _) = try LDAPCodec.decode(responseData)
         guard respID == messageID else {
@@ -723,6 +715,28 @@ public actor LDAPClient {
     }
 
     // MARK: - Private Helpers
+
+    /// Sends a request and receives a single response, with operation timeout.
+    private func sendAndReceive(_ data: [UInt8]) async throws -> [UInt8] {
+        let connection = self.connection
+        let timeout = self.config.operationTimeout
+
+        return try await withThrowingTaskGroup(of: [UInt8].self) { group in
+            group.addTask {
+                try await connection.send(data)
+                return try await connection.receiveMessage()
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw LDAPError.timeout
+            }
+            guard let result = try await group.next() else {
+                throw LDAPError.timeout
+            }
+            group.cancelAll()
+            return result
+        }
+    }
 
     private func allocateMessageID() -> Int32 {
         let id = nextMessageID

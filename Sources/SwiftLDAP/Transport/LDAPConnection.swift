@@ -5,6 +5,9 @@ import Darwin
 
 /// Configuration for connecting to an LDAP server.
 public struct LDAPConnectionConfig: Sendable {
+    /// Maximum allowed BER message size in bytes (default: 10 MB).
+    public static let maxMessageSize = 10_485_760
+
     /// The hostname or IP address of the LDAP server.
     public let host: String
     /// The port number (default: 389 for LDAP/StartTLS, 636 for LDAPS).
@@ -118,7 +121,7 @@ private final class StreamTransport: @unchecked Sendable {
         }
 
         if enableTLS {
-            Self.applyTLSSettings(input: input, output: output, peerName: host, verifyPeer: verifyPeer)
+            try Self.applyTLSSettings(input: input, output: output, peerName: host, verifyPeer: verifyPeer)
         }
 
         input.open()
@@ -140,7 +143,7 @@ private final class StreamTransport: @unchecked Sendable {
         guard let input = inputStream, let output = outputStream else {
             throw LDAPError.notConnected
         }
-        Self.applyTLSSettings(input: input, output: output, peerName: peerName, verifyPeer: verifyPeer)
+        try Self.applyTLSSettings(input: input, output: output, peerName: peerName, verifyPeer: verifyPeer)
         #else
         throw LDAPError.tlsError("TLS not available on this platform")
         #endif
@@ -198,8 +201,8 @@ private final class StreamTransport: @unchecked Sendable {
         _inputStream = nil
         _outputStream = nil
         streamLock.unlock()
-        input?.close()
-        output?.close()
+        readQueue.sync { input?.close() }
+        writeQueue.sync { output?.close() }
     }
 
     // MARK: - Private Helpers
@@ -284,7 +287,7 @@ private final class StreamTransport: @unchecked Sendable {
     /// before `open()`, TLS is negotiated as part of opening (used by LDAPS).
     private static func applyTLSSettings(
         input: InputStream, output: OutputStream, peerName: String, verifyPeer: Bool
-    ) {
+    ) throws {
         var settings: [String: Any] = [
             kCFStreamSSLPeerName as String: peerName,
         ]
@@ -294,8 +297,12 @@ private final class StreamTransport: @unchecked Sendable {
             settings["kCFStreamSSLValidatesCertificateChain"] = false
         }
         let key = Stream.PropertyKey(rawValue: kCFStreamPropertySSLSettings as String)
-        input.setProperty(settings, forKey: key)
-        output.setProperty(settings, forKey: key)
+        guard input.setProperty(settings, forKey: key) else {
+            throw LDAPError.tlsError("Failed to apply TLS settings to input stream")
+        }
+        guard output.setProperty(settings, forKey: key) else {
+            throw LDAPError.tlsError("Failed to apply TLS settings to output stream")
+        }
     }
     #endif
 
@@ -347,11 +354,24 @@ actor LDAPConnection {
     /// For StartTLS mode, the connection is initially plain-text; call
     /// `upgradeTLS()` after the StartTLS extended operation succeeds.
     func connect() async throws {
-        try await transport.connect(
-            host: config.host,
-            port: Int(config.port),
-            enableTLS: config.security == .ldaps
-        )
+        let transport = self.transport
+        let host = config.host
+        let port = Int(config.port)
+        let enableTLS = config.security == .ldaps
+        let timeout = config.connectTimeout
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await transport.connect(host: host, port: port, enableTLS: enableTLS)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw LDAPError.timeout
+            }
+            // The first task to complete wins; cancel the other.
+            _ = try await group.next()
+            group.cancelAll()
+        }
         isConnected = true
     }
 
@@ -402,6 +422,12 @@ actor LDAPConnection {
 
         // Step 3: All length bytes are now buffered; compute total message length.
         let totalLength = peekMessageLength()
+
+        guard totalLength <= LDAPConnectionConfig.maxMessageSize else {
+            throw LDAPError.protocolError(
+                "Message size \(totalLength) exceeds maximum of \(LDAPConnectionConfig.maxMessageSize) bytes"
+            )
+        }
 
         // Step 4: Buffer the full message content.
         try await ensureBuffered(minBytes: totalLength)

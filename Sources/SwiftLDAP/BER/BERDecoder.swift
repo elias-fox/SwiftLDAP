@@ -228,6 +228,9 @@ public struct BERDecoder: Sendable {
         guard numBytes > 0 else {
             throw BERDecodingError.indefiniteLengthNotSupported
         }
+        guard numBytes <= 4 else {
+            throw BERDecodingError.invalidData("BER length field too large (\(numBytes) bytes)")
+        }
         guard offset + numBytes <= data.endIndex else {
             throw BERDecodingError.unexpectedEndOfData
         }
