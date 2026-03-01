@@ -37,7 +37,7 @@ public struct BERElement: Sendable {
 
     /// Interprets the content as an INTEGER, returning an `Int`.
     public func integerValue() throws -> Int {
-        guard !content.isEmpty else {
+        guard !content.isEmpty, content.count <= MemoryLayout<Int>.size else {
             throw BERDecodingError.invalidIntegerEncoding
         }
         var result: Int = 0

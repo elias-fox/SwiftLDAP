@@ -22,6 +22,11 @@ public struct LDAPConnectionConfig: Sendable {
     public let operationTimeout: TimeInterval
     /// Maximum allowed BER message size in bytes (default: 10 MB).
     public let maxMessageSize: Int
+    /// Maximum number of search result entries the client will accept (0 = no limit).
+    ///
+    /// When positive, `search()` throws `protocolError` if the server sends more entries
+    /// than this limit, defending against a malicious server that ignores `sizeLimit`.
+    public let maxSearchEntries: Int
 
     public init(
         host: String,
@@ -30,7 +35,8 @@ public struct LDAPConnectionConfig: Sendable {
         tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
         operationTimeout: TimeInterval = 60,
-        maxMessageSize: Int = 10_485_760
+        maxMessageSize: Int = 10_485_760,
+        maxSearchEntries: Int = 0
     ) {
         self.host = host
         self.port = port ?? (security == .ldaps ? 636 : 389)
@@ -39,6 +45,7 @@ public struct LDAPConnectionConfig: Sendable {
         self.connectTimeout = connectTimeout
         self.operationTimeout = operationTimeout
         self.maxMessageSize = maxMessageSize
+        self.maxSearchEntries = maxSearchEntries
     }
 }
 

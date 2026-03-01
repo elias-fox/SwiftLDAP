@@ -466,6 +466,71 @@ struct LDAPCodecTests {
         }
     }
 
+    // MARK: - Security Guards
+
+    @Test("Throws when LDAPResult contains too many referrals")
+    func decodeResultWithTooManyReferrals() {
+        var encoder = BEREncoder()
+        encoder.writeSequence { seq in
+            seq.writeInteger(1)
+            seq.writeSequence(tag: .searchResultDone) { done in
+                done.writeEnumerated(10) // referral
+                done.writeOctetString("")
+                done.writeOctetString("")
+                done.writeSequence(tag: .contextSpecificConstructed(3)) { refs in
+                    for i in 0..<101 {
+                        refs.writeOctetString("ldap://ref\(i).example.com/")
+                    }
+                }
+            }
+        }
+        let bytes = encoder.finish()
+        #expect(throws: BERDecodingError.self) {
+            try LDAPCodec.decode(bytes)
+        }
+    }
+
+    @Test("Throws when searchResultReference contains too many URIs")
+    func decodeSearchResultReferenceOverflow() {
+        var encoder = BEREncoder()
+        encoder.writeSequence { seq in
+            seq.writeInteger(2)
+            seq.writeSequence(tag: .searchResultReference) { ref in
+                for i in 0..<101 {
+                    ref.writeOctetString("ldap://ref\(i).example.com/")
+                }
+            }
+        }
+        let bytes = encoder.finish()
+        #expect(throws: BERDecodingError.self) {
+            try LDAPCodec.decode(bytes)
+        }
+    }
+
+    @Test("Throws when message contains too many controls")
+    func decodeMessageWithTooManyControls() {
+        var encoder = BEREncoder()
+        encoder.writeSequence { seq in
+            seq.writeInteger(1)
+            seq.writeSequence(tag: .bindResponse) { bind in
+                bind.writeEnumerated(0) // success
+                bind.writeOctetString("")
+                bind.writeOctetString("")
+            }
+            seq.writeSequence(tag: .contextSpecificConstructed(0)) { ctrls in
+                for i in 0..<101 {
+                    ctrls.writeSequence { ctrl in
+                        ctrl.writeOctetString("1.2.3.\(i)")
+                    }
+                }
+            }
+        }
+        let bytes = encoder.finish()
+        #expect(throws: BERDecodingError.self) {
+            try LDAPCodec.decode(bytes)
+        }
+    }
+
     // MARK: - LDAPResult with Referrals
 
     @Test("Decodes result with referrals")

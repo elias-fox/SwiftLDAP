@@ -193,6 +193,15 @@ struct BERDecoderTests {
         }
     }
 
+    @Test("Throws on INTEGER wider than platform Int")
+    func decodeOversizedInteger() {
+        // 9 content bytes — wider than Int on any 64-bit platform.
+        var decoder = BERDecoder(data: [0x02, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        #expect(throws: BERDecodingError.self) {
+            try decoder.readInteger()
+        }
+    }
+
     // MARK: - Round-Trip Tests
 
     @Test("Round-trips integer encoding/decoding")
