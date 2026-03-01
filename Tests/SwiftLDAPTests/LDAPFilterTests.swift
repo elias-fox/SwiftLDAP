@@ -148,6 +148,38 @@ struct LDAPFilterTests {
         }
     }
 
+    // MARK: - String Initializer
+
+    @Test("Init from simple filter string")
+    func initSimple() throws {
+        let filter = try LDAPFilter("(cn=John Doe)")
+        #expect(filter == .equalityMatch(attribute: "cn", value: Data("John Doe".utf8)))
+    }
+
+    @Test("Init from complex filter string")
+    func initComplex() throws {
+        let filter = try LDAPFilter("(&(objectClass=person)(cn=John*))")
+        if case .and(let filters) = filter {
+            #expect(filters.count == 2)
+            #expect(filters[0] == .equalityMatch(attribute: "objectClass", value: Data("person".utf8)))
+            if case .substrings(let attr, let initial, _, _) = filters[1] {
+                #expect(attr == "cn")
+                #expect(initial == Data("John".utf8))
+            } else {
+                Issue.record("Expected substrings filter")
+            }
+        } else {
+            Issue.record("Expected AND filter")
+        }
+    }
+
+    @Test("Init throws on invalid filter string")
+    func initInvalid() {
+        #expect(throws: LDAPError.self) {
+            try LDAPFilter("not a filter")
+        }
+    }
+
     // MARK: - Filter BER Encoding
 
     @Test("Encodes presence filter")

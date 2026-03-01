@@ -29,6 +29,11 @@ public indirect enum LDAPFilter: Sendable, Equatable {
 
     // MARK: - Convenience Initializers
 
+    /// Creates a filter by parsing an RFC 4515 filter string.
+    public init(_ filterString: String) throws {
+        self = try Self.parse(filterString)
+    }
+
     /// Creates an equality match filter with a string value.
     public static func equal(_ attribute: String, _ value: String) -> LDAPFilter {
         .equalityMatch(attribute: attribute, value: Data(value.utf8))
