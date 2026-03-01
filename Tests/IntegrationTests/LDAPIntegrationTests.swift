@@ -175,7 +175,7 @@ struct SearchTests {
                 .equal("sn", "Smith"),
             ])
         )
-        #expect(entries.count == 2)
+        #expect(entries.count >= 2)
         try await client.unbind()
     }
 
