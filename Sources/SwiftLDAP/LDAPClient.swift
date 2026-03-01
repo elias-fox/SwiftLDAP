@@ -3,7 +3,7 @@ import Foundation
 /// A pure-Swift LDAP client with async/await support.
 ///
 /// Implements the LDAPv3 protocol (RFC 4511) over TCP with optional TLS.
-/// Works on both iOS and macOS.
+/// Requires macOS 13+ or iOS 16+ (Darwin only).
 ///
 /// The client supports three security modes:
 /// - **No TLS**: Plain-text connection (`.none`).
@@ -107,30 +107,13 @@ public actor LDAPClient {
     /// - Returns: The bind result from the server.
     @discardableResult
     public func simpleBind(dn: String = "", password: String = "") async throws -> LDAPResult {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .bindRequest(
-                version: 3,
-                name: dn,
-                authentication: .simple(password: password)
-            )
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        try await performOperation(.bindRequest(version: 3, name: dn, authentication: .simple(password: password))) { op in
+            guard case .bindResponse(let result, _) = op else {
+                throw LDAPError.protocolError("Expected BindResponse")
+            }
+            try throwIfError(result)
+            return result
         }
-
-        guard case .bindResponse(let result, _) = operation else {
-            throw LDAPError.protocolError("Expected BindResponse")
-        }
-
-        try throwIfError(result)
-        return result
     }
 
     /// Performs a SASL bind.
@@ -308,9 +291,12 @@ public actor LDAPClient {
         let connection = self.connection
 
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     while true {
+                        // Stop promptly if the consumer cancelled or broke out of the loop.
+                        try Task.checkCancellation()
+
                         let responseData = try await connection.receiveMessage()
                         let (respID, operation, _) = try LDAPCodec.decode(responseData)
 
@@ -350,6 +336,13 @@ public actor LDAPClient {
                     continuation.finish(throwing: error)
                 }
             }
+            // Cancel the receive task when the stream is terminated — either because the
+            // consumer broke out of the for-await loop early, the task was cancelled, or
+            // the stream finished normally. Without this, the unstructured Task would keep
+            // calling receiveMessage() indefinitely, monopolising the actor.
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 
@@ -368,27 +361,13 @@ public actor LDAPClient {
         modifications: [ModifyItem],
         controls: [LDAPControl] = []
     ) async throws -> LDAPResult {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .modifyRequest(dn: dn, modifications: modifications),
-            controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        try await performOperation(.modifyRequest(dn: dn, modifications: modifications), controls: controls) { op in
+            guard case .modifyResponse(let result) = op else {
+                throw LDAPError.protocolError("Expected ModifyResponse")
+            }
+            try throwIfError(result)
+            return result
         }
-
-        guard case .modifyResponse(let result) = operation else {
-            throw LDAPError.protocolError("Expected ModifyResponse")
-        }
-
-        try throwIfError(result)
-        return result
     }
 
     // MARK: - Add (RFC 4511 §4.7)
@@ -406,27 +385,13 @@ public actor LDAPClient {
         attributes: [LDAPAttribute],
         controls: [LDAPControl] = []
     ) async throws -> LDAPResult {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .addRequest(dn: dn, attributes: attributes),
-            controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        try await performOperation(.addRequest(dn: dn, attributes: attributes), controls: controls) { op in
+            guard case .addResponse(let result) = op else {
+                throw LDAPError.protocolError("Expected AddResponse")
+            }
+            try throwIfError(result)
+            return result
         }
-
-        guard case .addResponse(let result) = operation else {
-            throw LDAPError.protocolError("Expected AddResponse")
-        }
-
-        try throwIfError(result)
-        return result
     }
 
     // MARK: - Delete (RFC 4511 §4.8)
@@ -442,27 +407,13 @@ public actor LDAPClient {
         dn: String,
         controls: [LDAPControl] = []
     ) async throws -> LDAPResult {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .deleteRequest(dn: dn),
-            controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        try await performOperation(.deleteRequest(dn: dn), controls: controls) { op in
+            guard case .deleteResponse(let result) = op else {
+                throw LDAPError.protocolError("Expected DeleteResponse")
+            }
+            try throwIfError(result)
+            return result
         }
-
-        guard case .deleteResponse(let result) = operation else {
-            throw LDAPError.protocolError("Expected DeleteResponse")
-        }
-
-        try throwIfError(result)
-        return result
     }
 
     // MARK: - Modify DN (RFC 4511 §4.9)
@@ -484,30 +435,16 @@ public actor LDAPClient {
         newSuperior: String? = nil,
         controls: [LDAPControl] = []
     ) async throws -> LDAPResult {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .modifyDNRequest(
-                dn: dn, newRDN: newRDN,
-                deleteOldRDN: deleteOldRDN, newSuperior: newSuperior
-            ),
+        try await performOperation(
+            .modifyDNRequest(dn: dn, newRDN: newRDN, deleteOldRDN: deleteOldRDN, newSuperior: newSuperior),
             controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        ) { op in
+            guard case .modifyDNResponse(let result) = op else {
+                throw LDAPError.protocolError("Expected ModifyDNResponse")
+            }
+            try throwIfError(result)
+            return result
         }
-
-        guard case .modifyDNResponse(let result) = operation else {
-            throw LDAPError.protocolError("Expected ModifyDNResponse")
-        }
-
-        try throwIfError(result)
-        return result
     }
 
     // MARK: - Compare (RFC 4511 §4.10)
@@ -526,38 +463,23 @@ public actor LDAPClient {
         value: String,
         controls: [LDAPControl] = []
     ) async throws -> Bool {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .compareRequest(
-                dn: dn,
-                attributeDescription: attribute,
-                assertionValue: Data(value.utf8)
-            ),
+        try await performOperation(
+            .compareRequest(dn: dn, attributeDescription: attribute, assertionValue: Data(value.utf8)),
             controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
-        }
-
-        guard case .compareResponse(let result) = operation else {
-            throw LDAPError.protocolError("Expected CompareResponse")
-        }
-
-        switch result.resultCode {
-        case .compareTrue: return true
-        case .compareFalse: return false
-        default:
-            throw LDAPError.serverError(
-                resultCode: result.resultCode,
-                diagnosticMessage: result.diagnosticMessage,
-                matchedDN: result.matchedDN
-            )
+        ) { op in
+            guard case .compareResponse(let result) = op else {
+                throw LDAPError.protocolError("Expected CompareResponse")
+            }
+            switch result.resultCode {
+            case .compareTrue: return true
+            case .compareFalse: return false
+            default:
+                throw LDAPError.serverError(
+                    resultCode: result.resultCode,
+                    diagnosticMessage: result.diagnosticMessage,
+                    matchedDN: result.matchedDN
+                )
+            }
         }
     }
 
@@ -592,27 +514,13 @@ public actor LDAPClient {
         value: Data? = nil,
         controls: [LDAPControl] = []
     ) async throws -> (result: LDAPResult, oid: String?, value: Data?) {
-        let messageID = allocateMessageID()
-
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .extendedRequest(oid: oid, value: value),
-            controls: controls
-        )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        try await performOperation(.extendedRequest(oid: oid, value: value), controls: controls) { op in
+            guard case .extendedResponse(let result, let respOID, let respValue) = op else {
+                throw LDAPError.protocolError("Expected ExtendedResponse")
+            }
+            try throwIfError(result)
+            return (result, respOID, respValue)
         }
-
-        guard case .extendedResponse(let result, let respOID, let respValue) = operation else {
-            throw LDAPError.protocolError("Expected ExtendedResponse")
-        }
-
-        try throwIfError(result)
-        return (result, respOID, respValue)
     }
 
     /// Performs the StartTLS extended operation (RFC 4511 §4.14.1, RFC 4513).
@@ -620,15 +528,9 @@ public actor LDAPClient {
     /// This upgrades the connection to TLS. Must be called before binding
     /// if the server requires encryption.
     public func startTLS() async throws {
-        let (result, _, _) = try await extendedOperation(
+        _ = try await extendedOperation(
             oid: "1.3.6.1.4.1.1466.20037" // OID for StartTLS
         )
-
-        guard result.resultCode == .success else {
-            throw LDAPError.tlsError(
-                "StartTLS failed: \(result.resultCode) - \(result.diagnosticMessage)"
-            )
-        }
 
         try await connection.upgradeTLS()
     }
@@ -705,6 +607,26 @@ public actor LDAPClient {
 
     // MARK: - Private Helpers
 
+    /// Encodes, sends, receives, and decodes a single-response LDAP operation.
+    ///
+    /// Handles the common scaffolding shared by all simple request-response operations:
+    /// message ID allocation, BER encoding, send/receive, decoding, and message ID validation.
+    /// The `extract` closure performs operation-specific response matching and error handling.
+    private func performOperation<T>(
+        _ operation: LDAPOperation,
+        controls: [LDAPControl] = [],
+        extract: (LDAPOperation) throws -> T
+    ) async throws -> T {
+        let messageID = allocateMessageID()
+        let requestBytes = LDAPCodec.encode(messageID: messageID, operation: operation, controls: controls)
+        let responseData = try await sendAndReceive(requestBytes)
+        let (respID, respOp, _) = try LDAPCodec.decode(responseData)
+        guard respID == messageID else {
+            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        }
+        return try extract(respOp)
+    }
+
     /// Sends a request and receives a single response, with operation timeout.
     ///
     /// Note: The underlying blocking I/O does not respond to task cancellation.
@@ -733,7 +655,7 @@ public actor LDAPClient {
     private func allocateMessageID() -> Int32 {
         let id = nextMessageID
         nextMessageID += 1
-        if nextMessageID > Int32.max - 1 {
+        if nextMessageID >= Int32.max {
             nextMessageID = 1
         }
         return id
