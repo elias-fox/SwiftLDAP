@@ -55,12 +55,44 @@ struct TransportIOError: Error, Sendable {
 ///
 /// All blocking I/O is dispatched to dedicated serial queues to avoid
 /// blocking Swift concurrency executors.
+///
+/// `@unchecked Sendable` is required because `InputStream` and `OutputStream`
+/// do not conform to `Sendable`. Thread safety is ensured by protecting all
+/// mutable state with `streamLock`, while the serial `readQueue` and
+/// `writeQueue` guarantee that blocking I/O operations do not overlap.
 private final class StreamTransport: @unchecked Sendable {
-    private var inputStream: InputStream?
-    private var outputStream: OutputStream?
+    private let streamLock = NSLock()
+    private var _inputStream: InputStream?
+    private var _outputStream: OutputStream?
     private let readQueue = DispatchQueue(label: "SwiftLDAP.StreamTransport.read")
     private let writeQueue = DispatchQueue(label: "SwiftLDAP.StreamTransport.write")
     private let verifyPeer: Bool
+
+    private var inputStream: InputStream? {
+        get {
+            streamLock.lock()
+            defer { streamLock.unlock() }
+            return _inputStream
+        }
+        set {
+            streamLock.lock()
+            defer { streamLock.unlock() }
+            _inputStream = newValue
+        }
+    }
+
+    private var outputStream: OutputStream? {
+        get {
+            streamLock.lock()
+            defer { streamLock.unlock() }
+            return _outputStream
+        }
+        set {
+            streamLock.lock()
+            defer { streamLock.unlock() }
+            _outputStream = newValue
+        }
+    }
 
     init(verifyPeer: Bool = true) {
         self.verifyPeer = verifyPeer
@@ -160,10 +192,14 @@ private final class StreamTransport: @unchecked Sendable {
 
     /// Closes the streams and releases resources.
     func close() {
-        inputStream?.close()
-        outputStream?.close()
-        inputStream = nil
-        outputStream = nil
+        streamLock.lock()
+        let input = _inputStream
+        let output = _outputStream
+        _inputStream = nil
+        _outputStream = nil
+        streamLock.unlock()
+        input?.close()
+        output?.close()
     }
 
     // MARK: - Private Helpers
