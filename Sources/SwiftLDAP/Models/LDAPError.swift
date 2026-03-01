@@ -10,8 +10,6 @@ public enum LDAPError: Error, Sendable {
     case protocolError(String)
     /// A timeout occurred waiting for a response.
     case timeout
-    /// The SASL mechanism is not supported.
-    case unsupportedSASLMechanism(String)
     /// A TLS/StartTLS operation failed.
     case tlsError(String)
     /// An invalid filter string was provided.

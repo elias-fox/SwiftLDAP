@@ -187,8 +187,19 @@ private final class StreamTransport: @unchecked Sendable {
                 } else if bytesRead == 0 {
                     continuation.resume(throwing: LDAPError.connectionClosed)
                 } else {
-                    let desc = input.streamError?.localizedDescription ?? "Read error"
-                    continuation.resume(throwing: LDAPError.ioError(TransportIOError(desc)))
+                    let err = input.streamError
+                    // Classify TLS handshake failures as tlsError for clearer diagnostics.
+                    // CFNetwork TLS errors have domain "kCFErrorDomainCFNetwork" and codes
+                    // in the -9800 range (SecureTransport OSStatus values).
+                    let nsError = err as NSError?
+                    let isTLS = nsError?.domain == "kCFErrorDomainCFNetwork"
+                        && (nsError?.code ?? 0) <= -9800
+                    let desc = err?.localizedDescription ?? "Read error"
+                    if isTLS {
+                        continuation.resume(throwing: LDAPError.tlsError("TLS error: \(desc)"))
+                    } else {
+                        continuation.resume(throwing: LDAPError.ioError(TransportIOError(desc)))
+                    }
                 }
             }
         }
@@ -286,6 +297,12 @@ private final class StreamTransport: @unchecked Sendable {
     /// When called on an already-open stream, this triggers an in-place TLS
     /// handshake on the underlying socket (used by StartTLS). When called
     /// before `open()`, TLS is negotiated as part of opening (used by LDAPS).
+    ///
+    /// The actual TLS handshake completes on the first subsequent I/O operation.
+    /// Any handshake failure will surface as a `tlsError` on that first send or receive.
+    ///
+    /// Note: macOS 13+ / iOS 16+ enforce TLS 1.2 as the minimum via App Transport
+    /// Security, so no explicit minimum version setting is required.
     private static func applyTLSSettings(
         input: InputStream, output: OutputStream, peerName: String, verifyPeer: Bool
     ) throws {
@@ -303,6 +320,14 @@ private final class StreamTransport: @unchecked Sendable {
         }
         guard output.setProperty(settings, forKey: key) else {
             throw LDAPError.tlsError("Failed to apply TLS settings to output stream")
+        }
+        // Check that neither stream immediately entered an error state after TLS settings
+        // were applied (e.g., invalid peer name, rejected settings).
+        if let err = input.streamError {
+            throw LDAPError.tlsError("TLS configuration failed on input stream: \(err.localizedDescription)")
+        }
+        if let err = output.streamError {
+            throw LDAPError.tlsError("TLS configuration failed on output stream: \(err.localizedDescription)")
         }
     }
     #endif
@@ -418,6 +443,9 @@ actor LDAPConnection {
             let numLengthBytes = Int(firstLengthByte & 0x7F)
             guard numLengthBytes > 0 else {
                 throw LDAPError.protocolError("Indefinite length not supported")
+            }
+            guard numLengthBytes <= 4 else {
+                throw LDAPError.protocolError("BER length field too large (\(numLengthBytes) bytes)")
             }
             // 1 (tag) + 1 (first length byte) + numLengthBytes
             try await ensureBuffered(minBytes: 2 + numLengthBytes)
