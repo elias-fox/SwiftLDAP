@@ -147,12 +147,12 @@ struct LDAPModelTests {
 
     // MARK: - LDAPConnectionConfig
 
-    @Test("Connection config defaults to plain LDAP on port 389")
+    @Test("Connection config defaults to StartTLS on port 389")
     func connectionConfigDefaults() {
         let config = LDAPConnectionConfig(host: "ldap.example.com")
         #expect(config.host == "ldap.example.com")
         #expect(config.port == 389)
-        #expect(config.security == .none)
+        #expect(config.security == .startTLS)
     }
 
     @Test("Connection config with LDAPS defaults to port 636")

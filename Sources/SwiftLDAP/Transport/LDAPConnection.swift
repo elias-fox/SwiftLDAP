@@ -5,9 +5,6 @@ import Darwin
 
 /// Configuration for connecting to an LDAP server.
 public struct LDAPConnectionConfig: Sendable {
-    /// Maximum allowed BER message size in bytes (default: 10 MB).
-    public static let maxMessageSize = 10_485_760
-
     /// The hostname or IP address of the LDAP server.
     public let host: String
     /// The port number (default: 389 for LDAP/StartTLS, 636 for LDAPS).
@@ -23,14 +20,17 @@ public struct LDAPConnectionConfig: Sendable {
     public let connectTimeout: TimeInterval
     /// Read/write timeout in seconds.
     public let operationTimeout: TimeInterval
+    /// Maximum allowed BER message size in bytes (default: 10 MB).
+    public let maxMessageSize: Int
 
     public init(
         host: String,
         port: UInt16? = nil,
-        security: LDAPSecurityMode = .none,
+        security: LDAPSecurityMode = .startTLS,
         tlsVerifyPeer: Bool = true,
         connectTimeout: TimeInterval = 30,
-        operationTimeout: TimeInterval = 60
+        operationTimeout: TimeInterval = 60,
+        maxMessageSize: Int = 10_485_760
     ) {
         self.host = host
         self.port = port ?? (security == .ldaps ? 636 : 389)
@@ -38,6 +38,7 @@ public struct LDAPConnectionConfig: Sendable {
         self.tlsVerifyPeer = tlsVerifyPeer
         self.connectTimeout = connectTimeout
         self.operationTimeout = operationTimeout
+        self.maxMessageSize = maxMessageSize
     }
 }
 
@@ -360,6 +361,9 @@ actor LDAPConnection {
         let enableTLS = config.security == .ldaps
         let timeout = config.connectTimeout
 
+        // Note: The underlying POSIX connect() is blocking and does not respond
+        // to task cancellation. On timeout, the connection attempt continues in
+        // the background until the OS-level TCP timeout fires.
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 try await transport.connect(host: host, port: port, enableTLS: enableTLS)
@@ -368,7 +372,6 @@ actor LDAPConnection {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 throw LDAPError.timeout
             }
-            // The first task to complete wins; cancel the other.
             _ = try await group.next()
             group.cancelAll()
         }
@@ -423,9 +426,9 @@ actor LDAPConnection {
         // Step 3: All length bytes are now buffered; compute total message length.
         let totalLength = peekMessageLength()
 
-        guard totalLength <= LDAPConnectionConfig.maxMessageSize else {
+        guard totalLength <= config.maxMessageSize else {
             throw LDAPError.protocolError(
-                "Message size \(totalLength) exceeds maximum of \(LDAPConnectionConfig.maxMessageSize) bytes"
+                "Message size \(totalLength) exceeds maximum of \(config.maxMessageSize) bytes"
             )
         }
 

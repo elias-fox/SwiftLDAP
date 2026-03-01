@@ -38,7 +38,6 @@ public actor LDAPClient {
     private let connection: LDAPConnection
     private let config: LDAPConnectionConfig
     private var nextMessageID: Int32 = 1
-    private var isBound = false
 
     /// Creates a new LDAP client.
     ///
@@ -94,7 +93,6 @@ public actor LDAPClient {
     /// Disconnects from the LDAP server.
     public func disconnect() async {
         await connection.disconnect()
-        isBound = false
     }
 
     // MARK: - Bind (RFC 4511 §4.2)
@@ -129,10 +127,6 @@ public actor LDAPClient {
 
         guard case .bindResponse(let result, _) = operation else {
             throw LDAPError.protocolError("Expected BindResponse")
-        }
-
-        if result.resultCode == .success {
-            isBound = true
         }
 
         try throwIfError(result)
@@ -174,10 +168,6 @@ public actor LDAPClient {
             throw LDAPError.protocolError("Expected BindResponse")
         }
 
-        if result.resultCode == .success {
-            isBound = true
-        }
-
         if result.resultCode != .success && result.resultCode != .saslBindInProgress {
             throw LDAPError.serverError(
                 resultCode: result.resultCode,
@@ -204,7 +194,6 @@ public actor LDAPClient {
         )
         try await connection.send(requestBytes)
         await connection.disconnect()
-        isBound = false
     }
 
     // MARK: - Search (RFC 4511 §4.5)
@@ -717,6 +706,9 @@ public actor LDAPClient {
     // MARK: - Private Helpers
 
     /// Sends a request and receives a single response, with operation timeout.
+    ///
+    /// Note: The underlying blocking I/O does not respond to task cancellation.
+    /// On timeout, the in-flight read may continue in the background.
     private func sendAndReceive(_ data: [UInt8]) async throws -> [UInt8] {
         let connection = self.connection
         let timeout = self.config.operationTimeout

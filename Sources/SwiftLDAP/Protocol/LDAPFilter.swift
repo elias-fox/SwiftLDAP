@@ -160,15 +160,11 @@ extension LDAPFilter {
     }
 }
 
-// MARK: - Filter Depth Limit
-
-/// Maximum allowed filter nesting depth to prevent stack overflow.
-private let _maxFilterDepth = 32
-
 // MARK: - Filter BER Decoding
 
 extension LDAPFilter {
-    private static var maxFilterDepth: Int { _maxFilterDepth }
+    /// Maximum allowed filter nesting depth to prevent stack overflow.
+    fileprivate static let maxFilterDepth = 32
 
     /// Decodes a filter from a BER element.
     public static func decode(from element: BERElement) throws -> LDAPFilter {
@@ -318,8 +314,8 @@ private struct FilterParser {
     // MARK: - Parsing
 
     mutating func parseFilter(depth: Int) throws -> LDAPFilter {
-        guard depth < _maxFilterDepth else {
-            throw LDAPError.invalidFilter("Filter nesting exceeds maximum depth of \(_maxFilterDepth)")
+        guard depth < LDAPFilter.maxFilterDepth else {
+            throw LDAPError.invalidFilter("Filter nesting exceeds maximum depth of \(LDAPFilter.maxFilterDepth)")
         }
         try expect("(")
         let filter = try parseFilterComp(depth: depth)
