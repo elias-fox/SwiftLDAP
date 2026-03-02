@@ -29,7 +29,7 @@ Add SwiftLDAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/example/SwiftLDAP.git", from: "1.0.0"),
+    .package(url: "https://github.com/elias-fox/Swift-LDAP.git", from: "1.0.0"),
 ],
 targets: [
     .target(
@@ -82,6 +82,9 @@ let client = LDAPClient(host: "ldap.example.com", port: 3389, security: .startTL
 
 // Disable certificate verification (testing only)
 let client = LDAPClient(host: "localhost", security: .ldaps, tlsVerifyPeer: false)
+
+// Cap search results at 1000 entries (guards against runaway servers)
+let client = LDAPClient(host: "ldap.example.com", security: .ldaps, maxSearchEntries: 1000)
 ```
 
 Call `connect()` to establish the TCP connection. For `.startTLS`, the TLS handshake is performed automatically before `connect()` returns.
@@ -101,7 +104,9 @@ let config = LDAPConnectionConfig(
     security: .ldaps,
     tlsVerifyPeer: true,
     connectTimeout: 10,
-    operationTimeout: 30
+    operationTimeout: 30,
+    maxMessageSize: 10_485_760,  // 10 MB (default)
+    maxSearchEntries: 1000       // 0 = no limit (default)
 )
 let client = LDAPClient(config: config)
 try await client.connect()
@@ -323,6 +328,16 @@ try await client.modifyDN(
 )
 ```
 
+## Abandon
+
+Cancel an in-flight operation by its message ID. The server silently discards
+the operation — no response is returned.
+
+```swift
+// abandon is rarely needed directly; most callers use task cancellation with searchStream
+try await client.abandon(messageID: messageID)
+```
+
 ## Compare
 
 Test whether an entry has a specific attribute value without fetching the entry:
@@ -409,6 +424,7 @@ do {
 | `.invalidFilter(_)` | Filter string could not be parsed |
 | `.tlsError(_)` | TLS negotiation failed |
 | `.ioError(_)` | Underlying transport I/O error |
+| `.unexpectedMessageID(expected:received:)` | Response message ID did not match the request |
 
 ## License
 
