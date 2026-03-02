@@ -31,15 +31,15 @@ docker compose down -v
 
 ### Layered Design (bottom-up)
 
-1. **Transport** (`Sources/SwiftLDAP/Transport/`) — `StreamTransport` (private) wraps POSIX sockets + CFStream for TCP I/O with TLS support. `LDAPConnection` (internal actor) frames complete BER messages from the raw byte stream. `LDAPSecurityMode` enum defines `.none`, `.startTLS`, `.ldaps`.
+1. **Transport** (`Sources/SwiftLDAP/Transport/`) — `StreamTransport` (private) wraps POSIX sockets + CFStream for TCP I/O with TLS support. `LDAPConnection` (internal actor) frames complete BER messages from the raw byte stream. `LDAPSecurityMode` enum defines `.none`, `.startTLS`, `.ldaps`. `LDAPConnectionConfig` (public struct) exposes configurable limits: `connectTimeout`, `operationTimeout`, `maxMessageSize` (10 MB default), `maxSearchEntries`, and `tlsVerifyPeer`.
 
 2. **BER** (`Sources/SwiftLDAP/BER/`) — ASN.1 BER encoding/decoding. `BEREncoder` builds TLV byte arrays via a closure-based sub-encoder pattern for constructed types. `BERDecoder` reads TLV elements sequentially from a byte slice. `ASN1Tag` defines all universal and LDAP application-specific tags.
 
-3. **Protocol** (`Sources/SwiftLDAP/Protocol/`) — `LDAPCodec` translates between `LDAPOperation` enum (21 cases for all request/response PDUs) and BER bytes. `LDAPFilter` is an indirect enum with BER encode/decode and an RFC 4515 recursive-descent string parser. `LDAPResultCode` covers all 37 RFC 4511 codes.
+3. **Protocol** (`Sources/SwiftLDAP/Protocol/`) — `LDAPCodec` translates between `LDAPOperation` enum (21 cases for all request/response PDUs) and BER bytes. `LDAPFilter` is an indirect enum with BER encode/decode and an RFC 4515 recursive-descent string parser; convenience constructors include `.equal(attr, value)`, `.exists(attr)`, `.substring(attr, pattern)`. `LDAPResultCode` covers all 37 RFC 4511 codes. `LDAPMessage.swift` defines shared protocol structures: `LDAPControl`, `ModifyItem`, `SearchParameters`, `BindAuthentication`, `SearchScope`, `DerefAliases`, `ModifyOperation`.
 
-4. **Models** (`Sources/SwiftLDAP/Models/`) — `LDAPEntry`, `LDAPAttribute`, `LDAPError`, `LDAPResult`, `LDAPControl`, `ModifyItem`.
+4. **Models** (`Sources/SwiftLDAP/Models/`) — `LDAPEntry` (dn + `[String: [Data]]` attributes), `LDAPAttribute`, `LDAPError` (8-case enum covering server errors, TLS, protocol, timeout, I/O).
 
-5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. All LDAP operations live here.
+5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. Operations: `connect`, `simpleBind`, `search`, `searchStream`, `add`, `modify`, `delete`, `modifyDN`, `compare`, `whoAmI`, `extendedOperation`.
 
 ### Key Patterns
 
