@@ -204,7 +204,7 @@ public actor LDAPClient {
         sizeLimit: Int = 0,
         timeLimit: Int = 0,
         typesOnly: Bool = false,
-        filter: LDAPFilter,
+        filter: LDAPFilter = .exists("objectClass"),
         attributes: [String] = [],
         controls: [LDAPControl] = []
     ) async throws -> [LDAPEntry] {
