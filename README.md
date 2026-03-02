@@ -29,7 +29,7 @@ Add SwiftLDAP to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/elias-fox/Swift-LDAP.git", from: "1.0.0"),
+    .package(url: "https://github.com/elias-fox/SwiftLDAP.git", from: "1.0.0"),
 ],
 targets: [
     .target(
