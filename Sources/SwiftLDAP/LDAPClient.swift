@@ -133,7 +133,6 @@ public actor LDAPClient {
         credentials: Data? = nil
     ) async throws -> (result: LDAPResult, serverCredentials: Data?) {
         let messageID = allocateMessageID()
-
         let requestBytes = LDAPCodec.encode(
             messageID: messageID,
             operation: .bindRequest(
@@ -142,18 +141,14 @@ public actor LDAPClient {
                 authentication: .sasl(mechanism: mechanism, credentials: credentials)
             )
         )
-
-        let responseData = try await sendAndReceive(requestBytes)
-
-        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        let conn = connection
+        let responseData = try await withTimeout(config.operationTimeout) {
+            try await conn.sendAndReceive(messageID: messageID, data: requestBytes)
         }
-
+        let (_, operation, _) = try LDAPCodec.decode(responseData)
         guard case .bindResponse(let result, let serverCreds) = operation else {
             throw LDAPError.protocolError("Expected BindResponse")
         }
-
         if result.resultCode != .success && result.resultCode != .saslBindInProgress {
             throw LDAPError.serverError(
                 resultCode: result.resultCode,
@@ -161,7 +156,6 @@ public actor LDAPClient {
                 matchedDN: result.matchedDN
             )
         }
-
         return (result, serverCreds)
     }
 
@@ -178,7 +172,7 @@ public actor LDAPClient {
             messageID: messageID,
             operation: .unbindRequest
         )
-        try await connection.send(requestBytes)
+        try await connection.sendFireAndForget(requestBytes)
         await connection.disconnect()
     }
 
@@ -227,38 +221,33 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
+        let rawStream = try await connection.sendForStream(messageID: messageID, data: requestBytes)
 
         var entries: [LDAPEntry] = []
-
-        // Read responses until SearchResultDone
-        while true {
-            let responseData = try await connection.receiveMessage()
-            let (respID, operation, _) = try LDAPCodec.decode(responseData)
-
-            guard respID == messageID else {
-                throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
-            }
-
+        for try await responseData in rawStream {
+            let (_, operation, _) = try LDAPCodec.decode(responseData)
             switch operation {
             case .searchResultEntry(let entry):
                 entries.append(entry)
                 if sizeLimit > 0 && entries.count >= sizeLimit {
+                    // Breaking the loop cancels the stream, triggering onTermination → removePending.
                     return entries
                 }
                 if config.maxSearchEntries > 0 && entries.count > config.maxSearchEntries {
                     throw LDAPError.protocolError("Search result count exceeds client limit")
                 }
             case .searchResultReference:
-                // Skip referrals for now; could be exposed via a callback.
+                // Skip referrals; could be exposed via a callback in the future.
                 continue
             case .searchResultDone(let result):
+                await connection.finishStream(messageID: messageID, error: nil)
                 try throwIfError(result)
                 return entries
             default:
                 throw LDAPError.protocolError("Unexpected response during search")
             }
         }
+        return entries
     }
 
     /// Performs an LDAP search and returns results as an `AsyncStream`.
@@ -295,33 +284,22 @@ public actor LDAPClient {
             controls: controls
         )
 
-        try await connection.send(requestBytes)
-
+        let rawStream = try await connection.sendForStream(messageID: messageID, data: requestBytes)
         let connection = self.connection
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    while true {
-                        // Stop promptly if the consumer cancelled or broke out of the loop.
+                    for try await responseData in rawStream {
                         try Task.checkCancellation()
-
-                        let responseData = try await connection.receiveMessage()
-                        let (respID, operation, _) = try LDAPCodec.decode(responseData)
-
-                        guard respID == messageID else {
-                            continuation.finish(throwing: LDAPError.unexpectedMessageID(
-                                expected: messageID, received: respID
-                            ))
-                            return
-                        }
-
+                        let (_, operation, _) = try LDAPCodec.decode(responseData)
                         switch operation {
                         case .searchResultEntry(let entry):
                             continuation.yield(entry)
                         case .searchResultReference:
                             continue
                         case .searchResultDone(let result):
+                            await connection.finishStream(messageID: messageID, error: nil)
                             if result.resultCode != .success
                                 && result.resultCode != .sizeLimitExceeded
                             {
@@ -336,22 +314,19 @@ public actor LDAPClient {
                             return
                         default:
                             continuation.finish(
-                                throwing: LDAPError.protocolError(
-                                    "Unexpected response during search"))
+                                throwing: LDAPError.protocolError("Unexpected response during search"))
                             return
                         }
                     }
+                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
-            // Cancel the receive task when the stream is terminated — either because the
-            // consumer broke out of the for-await loop early, the task was cancelled, or
-            // the stream finished normally. Without this, the unstructured Task would keep
-            // calling receiveMessage() indefinitely, monopolising the actor.
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
+            // Cancel the processing task when the consumer exits the stream.
+            // This propagates cancellation to rawStream, which triggers its
+            // onTermination → removePending on the connection.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -499,13 +474,11 @@ public actor LDAPClient {
     /// - Parameter messageID: The message ID of the operation to abandon.
     public func abandon(messageID: Int32) async throws {
         let abandonID = allocateMessageID()
-
         let requestBytes = LDAPCodec.encode(
             messageID: abandonID,
             operation: .abandonRequest(messageID: messageID)
         )
-
-        try await connection.send(requestBytes)
+        try await connection.sendFireAndForget(requestBytes)
         // Abandon has no response per RFC 4511.
     }
 
@@ -628,29 +601,27 @@ public actor LDAPClient {
     ) async throws -> T {
         let messageID = allocateMessageID()
         let requestBytes = LDAPCodec.encode(messageID: messageID, operation: operation, controls: controls)
-        let responseData = try await sendAndReceive(requestBytes)
-        let (respID, respOp, _) = try LDAPCodec.decode(responseData)
-        guard respID == messageID else {
-            throw LDAPError.unexpectedMessageID(expected: messageID, received: respID)
+        let conn = connection
+        let responseData = try await withTimeout(config.operationTimeout) {
+            try await conn.sendAndReceive(messageID: messageID, data: requestBytes)
         }
+        let (_, respOp, _) = try LDAPCodec.decode(responseData)
         return try extract(respOp)
     }
 
-    /// Sends a request and receives a single response, with operation timeout.
+    /// Runs `operation` with a deadline, throwing `LDAPError.timeout` if it exceeds `seconds`.
     ///
-    /// Note: The underlying blocking I/O does not respond to task cancellation.
-    /// On timeout, the in-flight read may continue in the background.
-    private func sendAndReceive(_ data: [UInt8]) async throws -> [UInt8] {
-        let connection = self.connection
-        let timeout = self.config.operationTimeout
-
-        return try await withThrowingTaskGroup(of: [UInt8].self) { group in
+    /// On timeout the operation task is cancelled, which causes the demultiplexer's
+    /// `withTaskCancellationHandler` to remove the pending entry and resume any waiting
+    /// continuation with `CancellationError` (surfaced here as `LDAPError.timeout`).
+    private func withTimeout<T: Sendable>(
+        _ seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
             group.addTask {
-                try await connection.send(data)
-                return try await connection.receiveMessage()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 throw LDAPError.timeout
             }
             guard let result = try await group.next() else {

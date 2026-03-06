@@ -401,6 +401,119 @@ struct MutationTests {
     }
 }
 
+// MARK: - Concurrency Tests
+
+@Suite("Concurrency", .serialized, .enabled(if: integrationEnabled))
+struct ConcurrencyTests {
+
+    /// Fires N simultaneous searches on one connection, each with a distinct filter
+    /// and a known correct answer. If any response were mis-routed to the wrong caller
+    /// (the bug this demultiplexer fixes), the entry count or CN value would be wrong.
+    @Test("Concurrent searches on one connection return correct results")
+    func concurrentSearches() async throws {
+        let client = try await makeBoundClient()
+
+        // Interleave two distinct queries repeatedly to maximise scheduling overlap.
+        let queries: [(uid: String, expectedCN: String)] = Array(
+            repeatElement([("jdoe", "John Doe"), ("jsmith", "Jane Smith")], count: 5).joined()
+        )
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (uid, expectedCN) in queries {
+                group.addTask {
+                    let entries = try await client.search(
+                        baseDN: peopleDN,
+                        filter: .equal("uid", uid),
+                        attributes: ["cn"]
+                    )
+                    #expect(entries.count == 1, "uid=\(uid) should match exactly one entry")
+                    #expect(
+                        entries.first?.firstValue(for: "cn") == expectedCN,
+                        "uid=\(uid) should return cn=\(expectedCN)"
+                    )
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        try await client.unbind()
+    }
+
+    /// Mixes search, compare, and whoAmI in one task group to verify that
+    /// different operation types don't cross-wire each other's responses.
+    @Test("Mixed concurrent operations on one connection return correct results")
+    func concurrentMixedOperations() async throws {
+        let client = try await makeBoundClient()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for uid in ["jdoe", "jsmith", "jdoe", "jsmith"] {
+                group.addTask {
+                    let entries = try await client.search(
+                        baseDN: peopleDN,
+                        filter: .equal("uid", uid),
+                        attributes: ["cn"]
+                    )
+                    #expect(entries.count == 1)
+                }
+            }
+            group.addTask {
+                let matched = try await client.compare(
+                    dn: "cn=John Doe,\(peopleDN)", attribute: "sn", value: "Doe"
+                )
+                #expect(matched == true)
+            }
+            group.addTask {
+                let matched = try await client.compare(
+                    dn: "cn=Jane Smith,\(peopleDN)", attribute: "sn", value: "Doe"
+                )
+                #expect(matched == false)
+            }
+            group.addTask {
+                let identity = try await client.whoAmI()
+                #expect(identity.contains("admin"))
+            }
+            try await group.waitForAll()
+        }
+
+        try await client.unbind()
+    }
+
+    /// Runs a streaming search concurrently with several regular searches to verify
+    /// the streaming demux path doesn't interfere with one-shot operations.
+    @Test("Streaming search concurrent with regular searches returns correct results")
+    func concurrentStreamAndSearch() async throws {
+        let client = try await makeBoundClient()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            // Filter on uid=* — only the two seed entries carry this attribute,
+            // so the count is stable even if mutation tests are running concurrently.
+            group.addTask {
+                let stream = try await client.searchStream(
+                    baseDN: peopleDN,
+                    filter: .exists("uid"),
+                    attributes: ["cn"]
+                )
+                var count = 0
+                for try await _ in stream { count += 1 }
+                #expect(count == 2)
+            }
+            for uid in ["jdoe", "jsmith", "jdoe", "jsmith"] {
+                group.addTask {
+                    let entries = try await client.search(
+                        baseDN: peopleDN,
+                        filter: .equal("uid", uid),
+                        attributes: ["cn"]
+                    )
+                    #expect(entries.count == 1)
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        try await client.unbind()
+    }
+}
+
 // MARK: - Compare Tests
 
 @Suite("Compare", .serialized, .enabled(if: integrationEnabled))

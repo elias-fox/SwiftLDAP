@@ -362,21 +362,37 @@ private final class StreamTransport: @unchecked Sendable {
 
 /// Manages a TCP connection to an LDAP server.
 ///
-/// This actor provides a message-oriented interface over the raw TCP stream,
-/// handling BER message framing (reading tag-length-value boundaries).
+/// This actor provides a demultiplexed message interface over the raw TCP stream.
+/// A background reader loop reads all incoming BER messages and routes each one
+/// to the correct waiting caller by message ID, eliminating race conditions when
+/// multiple operations are in flight concurrently.
 ///
 /// Uses POSIX sockets with Foundation/CoreFoundation streams for transport,
 /// which supports both LDAPS (TLS from the start) and StartTLS (in-place
 /// TLS upgrade on an existing connection).
 actor LDAPConnection {
+    /// A pending caller waiting for one or more response messages.
+    private enum PendingRequest {
+        /// A single-response operation (bind, add, modify, etc.).
+        case oneShot(CheckedContinuation<[UInt8], Error>)
+        /// A multi-response operation (search).
+        case streaming(AsyncThrowingStream<[UInt8], Error>.Continuation)
+    }
+
     private let transport: StreamTransport
     private let config: LDAPConnectionConfig
     private var isConnected = false
     private var readBuffer: [UInt8] = []
+    private var pendingRequests: [Int32: PendingRequest] = [:]
+    private var readerTask: Task<Void, Never>?
 
     init(config: LDAPConnectionConfig) {
         self.config = config
         self.transport = StreamTransport(verifyPeer: config.tlsVerifyPeer)
+    }
+
+    deinit {
+        readerTask?.cancel()
     }
 
     // MARK: - Connection Lifecycle
@@ -387,6 +403,9 @@ actor LDAPConnection {
     /// For StartTLS mode, the connection is initially plain-text; call
     /// `upgradeTLS()` after the StartTLS extended operation succeeds.
     func connect() async throws {
+        readerTask?.cancel()
+        readerTask = nil
+
         let transport = self.transport
         let host = config.host
         let port = Int(config.port)
@@ -408,10 +427,14 @@ actor LDAPConnection {
             group.cancelAll()
         }
         isConnected = true
+        startReaderLoop()
     }
 
-    /// Closes the connection.
+    /// Closes the connection and fails all pending operations.
     func disconnect() {
+        readerTask?.cancel()
+        readerTask = nil
+        failAllPending(with: LDAPError.connectionClosed)
         transport.close()
         isConnected = false
         readBuffer = []
@@ -428,19 +451,175 @@ actor LDAPConnection {
 
     // MARK: - Message I/O
 
-    /// Sends raw bytes over the connection.
-    func send(_ data: [UInt8]) async throws {
-        guard isConnected else {
-            throw LDAPError.notConnected
+    /// Sends a request and waits for the single response routed to `messageID`.
+    ///
+    /// Registers the pending continuation before sending, so a fast response
+    /// cannot arrive before the caller is ready to receive it.
+    func sendAndReceive(messageID: Int32, data: [UInt8]) async throws -> [UInt8] {
+        guard isConnected else { throw LDAPError.notConnected }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[UInt8], Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                pendingRequests[messageID] = .oneShot(continuation)
+                let transport = self.transport
+                Task {
+                    do {
+                        try await transport.write(data)
+                    } catch {
+                        self.failPending(messageID: messageID, error: error)
+                    }
+                }
+            }
+        } onCancel: {
+            Task { [self] in await self.failPending(messageID: messageID, error: CancellationError()) }
         }
+    }
+
+    /// Sends a request and returns a stream that yields each raw response message.
+    ///
+    /// Registers the stream continuation before sending. The caller is responsible
+    /// for consuming the stream until `SearchResultDone` and then calling
+    /// `finishStream(messageID:error:)`, or simply breaking out of the loop.
+    func sendForStream(messageID: Int32, data: [UInt8]) async throws -> AsyncThrowingStream<[UInt8], Error> {
+        guard isConnected else { throw LDAPError.notConnected }
+        let (stream, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+        pendingRequests[messageID] = .streaming(continuation)
+        continuation.onTermination = { [weak self] _ in
+            Task { [weak self] in await self?.removePending(messageID: messageID) }
+        }
+        do {
+            try await transport.write(data)
+        } catch {
+            pendingRequests.removeValue(forKey: messageID)
+            continuation.finish(throwing: error)
+            throw error
+        }
+        return stream
+    }
+
+    /// Explicitly finishes a streaming request after the final response is consumed.
+    func finishStream(messageID: Int32, error: Error?) {
+        guard let req = pendingRequests.removeValue(forKey: messageID),
+              case .streaming(let cont) = req else { return }
+        if let error {
+            cont.finish(throwing: error)
+        } else {
+            cont.finish()
+        }
+    }
+
+    /// Sends bytes without registering a pending response (fire-and-forget).
+    ///
+    /// Used for operations with no server response, such as `UnbindRequest`
+    /// and `AbandonRequest`.
+    func sendFireAndForget(_ data: [UInt8]) async throws {
+        guard isConnected else { throw LDAPError.notConnected }
         try await transport.write(data)
     }
+
+    // MARK: - Background Reader Loop
+
+    private func startReaderLoop() {
+        readerTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runReaderLoop()
+        }
+    }
+
+    private func runReaderLoop() async {
+        while !Task.isCancelled {
+            do {
+                let message = try await receiveMessage()
+                let messageID = try peekMessageID(message)
+                dispatch(message: message, for: messageID)
+            } catch {
+                failAllPending(with: error)
+                break
+            }
+        }
+    }
+
+    /// Routes a received message to the waiting caller for `messageID`.
+    private func dispatch(message: [UInt8], for messageID: Int32) {
+        guard let req = pendingRequests[messageID] else {
+            // Unsolicited notification or response for a timed-out/cancelled request.
+            return
+        }
+        switch req {
+        case .oneShot(let cont):
+            pendingRequests.removeValue(forKey: messageID)
+            cont.resume(returning: message)
+        case .streaming(let cont):
+            cont.yield(message)
+            // Keep in pendingRequests; caller calls finishStream after SearchResultDone.
+        }
+    }
+
+    /// Extracts the messageID from the outer BER envelope without full decoding.
+    ///
+    /// LDAPMessage ::= SEQUENCE { messageID INTEGER, ... }
+    private func peekMessageID(_ bytes: [UInt8]) throws -> Int32 {
+        var offset = 1 // skip SEQUENCE tag (0x30)
+        guard offset < bytes.count else {
+            throw LDAPError.protocolError("Invalid BER: message too short for sequence length")
+        }
+        let seqLenByte = bytes[offset]
+        offset += 1
+        if seqLenByte & 0x80 != 0 {
+            offset += Int(seqLenByte & 0x7F) // skip multi-byte length octets
+        }
+        guard offset < bytes.count, bytes[offset] == 0x02 else {
+            throw LDAPError.protocolError("Invalid BER: expected INTEGER tag for messageID")
+        }
+        offset += 1
+        guard offset < bytes.count else {
+            throw LDAPError.protocolError("Invalid BER: truncated messageID length")
+        }
+        let idLen = Int(bytes[offset])
+        offset += 1
+        guard idLen > 0, idLen <= 4, offset + idLen <= bytes.count else {
+            throw LDAPError.protocolError("Invalid BER: invalid messageID length \(idLen)")
+        }
+        var id: Int32 = 0
+        for i in 0..<idLen {
+            id = (id << 8) | Int32(bytes[offset + i])
+        }
+        return id
+    }
+
+    private func failAllPending(with error: Error) {
+        let pending = pendingRequests
+        pendingRequests.removeAll()
+        for (_, req) in pending {
+            switch req {
+            case .oneShot(let cont): cont.resume(throwing: error)
+            case .streaming(let cont): cont.finish(throwing: error)
+            }
+        }
+    }
+
+    private func failPending(messageID: Int32, error: Error) {
+        guard let req = pendingRequests.removeValue(forKey: messageID) else { return }
+        switch req {
+        case .oneShot(let cont): cont.resume(throwing: error)
+        case .streaming(let cont): cont.finish(throwing: error)
+        }
+    }
+
+    private func removePending(messageID: Int32) {
+        pendingRequests.removeValue(forKey: messageID)
+    }
+
+    // MARK: - BER Framing
 
     /// Reads a single complete BER-encoded LDAP message from the connection.
     ///
     /// This method handles the framing: it progressively buffers enough data
     /// to parse the tag and length field, then reads the full content.
-    func receiveMessage() async throws -> [UInt8] {
+    private func receiveMessage() async throws -> [UInt8] {
         // Step 1: Buffer at least tag byte + first length byte.
         try await ensureBuffered(minBytes: 2)
 
@@ -475,8 +654,6 @@ actor LDAPConnection {
         readBuffer.removeFirst(totalLength)
         return message
     }
-
-    // MARK: - BER Framing
 
     /// Computes the total length of the next BER message in the buffer
     /// (tag + length field + content bytes).
