@@ -89,7 +89,12 @@ public actor LDAPClient {
         try await connection.connect()
 
         if config.security == .startTLS {
-            try await startTLS()
+            do {
+                try await startTLS()
+            } catch {
+                await connection.disconnect()
+                throw error
+            }
         }
     }
 
