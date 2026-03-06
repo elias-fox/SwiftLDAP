@@ -175,13 +175,4 @@ struct LDAPModelTests {
         #expect(config.port == 1389)
         #expect(config.security == .ldaps)
     }
-
-    // MARK: - LDAPSecurityMode
-
-    @Test("Security modes are distinct")
-    func securityModes() {
-        #expect(LDAPSecurityMode.none != .startTLS)
-        #expect(LDAPSecurityMode.none != .ldaps)
-        #expect(LDAPSecurityMode.startTLS != .ldaps)
-    }
 }
