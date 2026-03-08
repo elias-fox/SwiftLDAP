@@ -439,9 +439,8 @@ struct LDAPCodecTests {
         }
         let bytes = encoder.finish()
 
-        let (msgID, decoder) = try decodeLDAPMessageEnvelope(from: bytes)
+        let (msgID, _, _) = try LDAPCodec.decode(bytes)
         #expect(msgID == 42)
-        #expect(decoder.hasMore)
     }
 
     // MARK: - Search Result Reference

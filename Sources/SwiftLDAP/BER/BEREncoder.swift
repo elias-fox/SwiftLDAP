@@ -90,11 +90,6 @@ public struct BEREncoder: Sendable {
         writeSequence(tag: tag, body)
     }
 
-    /// Writes pre-encoded raw bytes directly into the buffer.
-    public mutating func writeRawBytes(_ bytes: [UInt8]) {
-        buffer.append(contentsOf: bytes)
-    }
-
     // MARK: - Low-Level
 
     /// Writes a tag byte.
@@ -151,17 +146,3 @@ public struct BEREncoder: Sendable {
     }
 }
 
-// MARK: - Convenience Free Functions
-
-/// Encodes an LDAP message envelope (SEQUENCE { messageID, protocolOp, [controls] }).
-public func encodeLDAPMessage(
-    messageID: Int32,
-    body: (inout BEREncoder) -> Void
-) -> [UInt8] {
-    var encoder = BEREncoder()
-    encoder.writeSequence { seq in
-        seq.writeInteger(messageID)
-        body(&seq)
-    }
-    return encoder.finish()
-}

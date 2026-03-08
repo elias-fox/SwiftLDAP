@@ -102,11 +102,6 @@ public struct BERDecoder: Sendable {
         offset < data.endIndex
     }
 
-    /// The number of remaining bytes.
-    public var remainingCount: Int {
-        data.endIndex - offset
-    }
-
     // MARK: - Reading Elements
 
     /// Reads the next TLV element from the buffer.
@@ -258,16 +253,3 @@ public struct BERDecoder: Sendable {
     }
 }
 
-// MARK: - Message-Level Helpers
-
-/// Decodes the outer LDAP message envelope (SEQUENCE { messageID, protocolOp, [controls] }).
-///
-/// Returns the message ID and a decoder positioned at the protocol operation element.
-public func decodeLDAPMessageEnvelope(
-    from data: [UInt8]
-) throws -> (messageID: Int32, decoder: BERDecoder) {
-    var outer = BERDecoder(data: data)
-    var seq = try outer.readSequence()
-    let messageID = try seq.readInt32()
-    return (messageID, seq)
-}

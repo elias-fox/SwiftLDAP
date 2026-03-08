@@ -55,9 +55,9 @@ struct LDAPModelTests {
 
     @Test("Result code descriptions")
     func resultCodeDescriptions() {
-        #expect(LDAPResultCode.success.description == "success")
-        #expect(LDAPResultCode.invalidCredentials.description == "invalidCredentials")
-        #expect(LDAPResultCode.noSuchObject.description == "noSuchObject")
+        #expect(String(describing: LDAPResultCode.success) == "success")
+        #expect(String(describing: LDAPResultCode.invalidCredentials) == "invalidCredentials")
+        #expect(String(describing: LDAPResultCode.noSuchObject) == "noSuchObject")
     }
 
     @Test("Result code raw values match RFC 4511")
@@ -101,7 +101,7 @@ struct LDAPModelTests {
             filter: .present(attribute: "objectClass")
         )
         #expect(params.scope == .wholeSubtree)
-        #expect(params.derefAliases == .neverDerefAliases)
+        #expect(params.derefAliases == .never)
         #expect(params.sizeLimit == 0)
         #expect(params.timeLimit == 0)
         #expect(params.typesOnly == false)

@@ -2,7 +2,7 @@
 ///
 /// These codes are returned by the server in all result messages
 /// (BindResponse, SearchResultDone, ModifyResponse, etc.).
-public enum LDAPResultCode: Int, Sendable, Equatable, Hashable, CustomStringConvertible {
+public enum LDAPResultCode: Int, Sendable, Equatable, Hashable {
     case success = 0
     case operationsError = 1
     case protocolError = 2
@@ -43,47 +43,4 @@ public enum LDAPResultCode: Int, Sendable, Equatable, Hashable, CustomStringConv
     case affectsMultipleDSAs = 71
     case other = 80
 
-    public var description: String {
-        switch self {
-        case .success: return "success"
-        case .operationsError: return "operationsError"
-        case .protocolError: return "protocolError"
-        case .timeLimitExceeded: return "timeLimitExceeded"
-        case .sizeLimitExceeded: return "sizeLimitExceeded"
-        case .compareFalse: return "compareFalse"
-        case .compareTrue: return "compareTrue"
-        case .authMethodNotSupported: return "authMethodNotSupported"
-        case .strongerAuthRequired: return "strongerAuthRequired"
-        case .referral: return "referral"
-        case .adminLimitExceeded: return "adminLimitExceeded"
-        case .unavailableCriticalExtension: return "unavailableCriticalExtension"
-        case .confidentialityRequired: return "confidentialityRequired"
-        case .saslBindInProgress: return "saslBindInProgress"
-        case .noSuchAttribute: return "noSuchAttribute"
-        case .undefinedAttributeType: return "undefinedAttributeType"
-        case .inappropriateMatching: return "inappropriateMatching"
-        case .constraintViolation: return "constraintViolation"
-        case .attributeOrValueExists: return "attributeOrValueExists"
-        case .invalidAttributeSyntax: return "invalidAttributeSyntax"
-        case .noSuchObject: return "noSuchObject"
-        case .aliasProblem: return "aliasProblem"
-        case .invalidDNSyntax: return "invalidDNSyntax"
-        case .aliasDereferencingProblem: return "aliasDereferencingProblem"
-        case .inappropriateAuthentication: return "inappropriateAuthentication"
-        case .invalidCredentials: return "invalidCredentials"
-        case .insufficientAccessRights: return "insufficientAccessRights"
-        case .busy: return "busy"
-        case .unavailable: return "unavailable"
-        case .unwillingToPerform: return "unwillingToPerform"
-        case .loopDetect: return "loopDetect"
-        case .namingViolation: return "namingViolation"
-        case .objectClassViolation: return "objectClassViolation"
-        case .notAllowedOnNonLeaf: return "notAllowedOnNonLeaf"
-        case .notAllowedOnRDN: return "notAllowedOnRDN"
-        case .entryAlreadyExists: return "entryAlreadyExists"
-        case .objectClassModsProhibited: return "objectClassModsProhibited"
-        case .affectsMultipleDSAs: return "affectsMultipleDSAs"
-        case .other: return "other"
-        }
-    }
 }

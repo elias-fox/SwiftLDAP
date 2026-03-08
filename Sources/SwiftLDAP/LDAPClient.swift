@@ -137,31 +137,19 @@ public actor LDAPClient {
         mechanism: String,
         credentials: Data? = nil
     ) async throws -> (result: LDAPResult, serverCredentials: Data?) {
-        let messageID = allocateMessageID()
-        let requestBytes = LDAPCodec.encode(
-            messageID: messageID,
-            operation: .bindRequest(
-                version: 3,
-                name: dn,
-                authentication: .sasl(mechanism: mechanism, credentials: credentials)
-            )
-        )
-        let conn = connection
-        let responseData = try await withTimeout(config.operationTimeout) {
-            try await conn.sendAndReceive(messageID: messageID, data: requestBytes)
+        try await performOperation(.bindRequest(version: 3, name: dn, authentication: .sasl(mechanism: mechanism, credentials: credentials))) { op in
+            guard case .bindResponse(let result, let serverCreds) = op else {
+                throw LDAPError.protocolError("Expected BindResponse")
+            }
+            if result.resultCode != .success && result.resultCode != .saslBindInProgress {
+                throw LDAPError.serverError(
+                    resultCode: result.resultCode,
+                    diagnosticMessage: result.diagnosticMessage,
+                    matchedDN: result.matchedDN
+                )
+            }
+            return (result, serverCreds)
         }
-        let (_, operation, _) = try LDAPCodec.decode(responseData)
-        guard case .bindResponse(let result, let serverCreds) = operation else {
-            throw LDAPError.protocolError("Expected BindResponse")
-        }
-        if result.resultCode != .success && result.resultCode != .saslBindInProgress {
-            throw LDAPError.serverError(
-                resultCode: result.resultCode,
-                diagnosticMessage: result.diagnosticMessage,
-                matchedDN: result.matchedDN
-            )
-        }
-        return (result, serverCreds)
     }
 
     // MARK: - Unbind (RFC 4511 §4.3)
@@ -199,7 +187,7 @@ public actor LDAPClient {
     public func search(
         baseDN: String,
         scope: SearchScope = .wholeSubtree,
-        derefAliases: DerefAliases = .neverDerefAliases,
+        derefAliases: DerefAliases = .never,
         sizeLimit: Int = 0,
         timeLimit: Int = 0,
         typesOnly: Bool = false,
@@ -207,25 +195,21 @@ public actor LDAPClient {
         attributes: [String] = [],
         controls: [LDAPControl] = []
     ) async throws -> [LDAPEntry] {
+        try await search(SearchParameters(
+            baseDN: baseDN, scope: scope, derefAliases: derefAliases,
+            sizeLimit: sizeLimit, timeLimit: timeLimit, typesOnly: typesOnly,
+            filter: filter, attributes: attributes
+        ), controls: controls)
+    }
+
+    /// Performs an LDAP search with a `SearchParameters` struct and returns all matching entries.
+    public func search(_ params: SearchParameters, controls: [LDAPControl] = []) async throws -> [LDAPEntry] {
         let messageID = allocateMessageID()
-
-        let params = SearchParameters(
-            baseDN: baseDN,
-            scope: scope,
-            derefAliases: derefAliases,
-            sizeLimit: sizeLimit,
-            timeLimit: timeLimit,
-            typesOnly: typesOnly,
-            filter: filter,
-            attributes: attributes
-        )
-
         let requestBytes = LDAPCodec.encode(
             messageID: messageID,
             operation: .searchRequest(params),
             controls: controls
         )
-
         let rawStream = try await connection.sendForStream(messageID: messageID, data: requestBytes)
 
         var entries: [LDAPEntry] = []
@@ -234,7 +218,7 @@ public actor LDAPClient {
             switch operation {
             case .searchResultEntry(let entry):
                 entries.append(entry)
-                if sizeLimit > 0 && entries.count >= sizeLimit {
+                if params.sizeLimit > 0 && entries.count >= params.sizeLimit {
                     // Breaking the loop cancels the stream, triggering onTermination → removePending.
                     return entries
                 }
@@ -262,7 +246,7 @@ public actor LDAPClient {
     public func searchStream(
         baseDN: String,
         scope: SearchScope = .wholeSubtree,
-        derefAliases: DerefAliases = .neverDerefAliases,
+        derefAliases: DerefAliases = .never,
         sizeLimit: Int = 0,
         timeLimit: Int = 0,
         typesOnly: Bool = false,
@@ -270,25 +254,21 @@ public actor LDAPClient {
         attributes: [String] = [],
         controls: [LDAPControl] = []
     ) async throws -> AsyncThrowingStream<LDAPEntry, Error> {
+        try await searchStream(SearchParameters(
+            baseDN: baseDN, scope: scope, derefAliases: derefAliases,
+            sizeLimit: sizeLimit, timeLimit: timeLimit, typesOnly: typesOnly,
+            filter: filter, attributes: attributes
+        ), controls: controls)
+    }
+
+    /// Performs an LDAP search with a `SearchParameters` struct and returns results as an `AsyncStream`.
+    public func searchStream(_ params: SearchParameters, controls: [LDAPControl] = []) async throws -> AsyncThrowingStream<LDAPEntry, Error> {
         let messageID = allocateMessageID()
-
-        let params = SearchParameters(
-            baseDN: baseDN,
-            scope: scope,
-            derefAliases: derefAliases,
-            sizeLimit: sizeLimit,
-            timeLimit: timeLimit,
-            typesOnly: typesOnly,
-            filter: filter,
-            attributes: attributes
-        )
-
         let requestBytes = LDAPCodec.encode(
             messageID: messageID,
             operation: .searchRequest(params),
             controls: controls
         )
-
         let rawStream = try await connection.sendForStream(messageID: messageID, data: requestBytes)
         let connection = self.connection
 

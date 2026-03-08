@@ -13,13 +13,13 @@ public enum SearchScope: Int, Sendable {
 /// How aliases are dereferenced during search (RFC 4511 §4.5.1).
 public enum DerefAliases: Int, Sendable {
     /// Never dereference aliases.
-    case neverDerefAliases = 0
+    case never = 0
     /// Dereference while searching subordinates of the base.
-    case derefInSearching = 1
+    case inSearching = 1
     /// Dereference when locating the base object.
-    case derefFindingBaseObj = 2
+    case findingBaseObject = 2
     /// Always dereference aliases.
-    case derefAlways = 3
+    case always = 3
 }
 
 /// The type of modification in a Modify operation (RFC 4511 §4.6).
@@ -161,7 +161,7 @@ public struct SearchParameters: Sendable {
     public init(
         baseDN: String,
         scope: SearchScope = .wholeSubtree,
-        derefAliases: DerefAliases = .neverDerefAliases,
+        derefAliases: DerefAliases = .never,
         sizeLimit: Int = 0,
         timeLimit: Int = 0,
         typesOnly: Bool = false,

@@ -13,8 +13,8 @@ private let adminPassword = "adminpassword"
 private let baseDN = "dc=example,dc=org"
 private let peopleDN = "ou=people,dc=example,dc=org"
 
-private let integrationEnabled = true
-    //ProcessInfo.processInfo.environment["LDAP_INTEGRATION_TESTS"] != nil
+private let integrationEnabled =
+    ProcessInfo.processInfo.environment["LDAP_INTEGRATION_TESTS"] != nil
 
 // MARK: - Helpers
 

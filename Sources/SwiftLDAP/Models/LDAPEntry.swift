@@ -13,16 +13,15 @@ public struct LDAPEntry: Sendable, Equatable {
     /// since LDAP attribute values may be binary (e.g., `jpegPhoto`).
     public let attributes: [String: [Data]]
     
+    private static let groupObjectClasses: Set<String> = ["groupOfNames", "posixGroup", "groupOfUniqueNames", "group", "groupOfMembers"]
+    private static let userObjectClasses: Set<String> = ["inetOrgPerson", "person", "organizationalPerson", "user", "posixAccount", "account"]
+
     public var isGroup: Bool {
-        let objectClass = Set(stringValues(for: "objectClass"))
-        let groupObjectClasses: Set<String> = ["groupOfNames", "posixGroup", "groupOfUniqueNames", "group", "groupOfMembers"]
-        return objectClass.intersection(groupObjectClasses).isEmpty == false
+        !Set(stringValues(for: "objectClass")).isDisjoint(with: Self.groupObjectClasses)
     }
-    
+
     public var isUser: Bool {
-        let objectClass = Set(stringValues(for: "objectClass"))
-        let userObjectClasses: Set<String> = ["inetOrgPerson", "person", "organizationalPerson", "user", "posixAccount", "account"]
-        return objectClass.intersection(userObjectClasses).isEmpty == false
+        !Set(stringValues(for: "objectClass")).isDisjoint(with: Self.userObjectClasses)
     }
 
     public init(dn: String, attributes: [String: [Data]]) {
