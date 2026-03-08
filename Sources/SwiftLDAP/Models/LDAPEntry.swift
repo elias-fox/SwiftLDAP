@@ -12,6 +12,18 @@ public struct LDAPEntry: Sendable, Equatable {
     /// Each attribute may have multiple values. Values are stored as raw `Data`
     /// since LDAP attribute values may be binary (e.g., `jpegPhoto`).
     public let attributes: [String: [Data]]
+    
+    public var isGroup: Bool {
+        let objectClass = Set(stringValues(for: "objectClass"))
+        let groupObjectClasses: Set<String> = ["groupOfNames", "posixGroup", "groupOfUniqueNames", "group", "groupOfMembers"]
+        return objectClass.intersection(groupObjectClasses).isEmpty == false
+    }
+    
+    public var isUser: Bool {
+        let objectClass = Set(stringValues(for: "objectClass"))
+        let userObjectClasses: Set<String> = ["inetOrgPerson", "person", "organizationalPerson", "user", "posixAccount", "account"]
+        return objectClass.intersection(userObjectClasses).isEmpty == false
+    }
 
     public init(dn: String, attributes: [String: [Data]]) {
         self.dn = dn
