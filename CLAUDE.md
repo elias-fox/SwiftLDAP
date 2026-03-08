@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SwiftLDAP is a pure-Swift LDAPv3 client library with async/await support. Zero external dependencies — built on Foundation and Darwin/CoreFoundation only. Targets macOS 13+ / iOS 16+ (Darwin-only due to CFStream-based transport). Uses Swift 6.0 strict concurrency throughout.
 
-Implements RFC 4511 (LDAPv3), RFC 4513 (auth/TLS), RFC 4515 (filter strings), RFC 4532 (Who Am I?).
+Implements RFC 4511 (LDAPv3), RFC 4513 (auth/TLS), RFC 4515 (filter strings), RFC 4512 (rootDSE/server info), RFC 4532 (Who Am I?).
 
 ## Build & Test Commands
 
@@ -37,9 +37,9 @@ docker compose down -v
 
 3. **Protocol** (`Sources/SwiftLDAP/Protocol/`) — `LDAPCodec` translates between `LDAPOperation` enum (21 cases for all request/response PDUs) and BER bytes. `LDAPFilter` is an indirect enum with BER encode/decode and an RFC 4515 recursive-descent string parser; convenience constructors include `.equal(attr, value)`, `.exists(attr)`, `.substring(attr, pattern)`. `LDAPResultCode` covers all 37 RFC 4511 codes. `LDAPMessage.swift` defines shared protocol structures: `LDAPControl`, `ModifyItem`, `SearchParameters`, `BindAuthentication`, `SearchScope`, `DerefAliases`, `ModifyOperation`.
 
-4. **Models** (`Sources/SwiftLDAP/Models/`) — `LDAPEntry` (dn + `[String: [Data]]` attributes), `LDAPAttribute`, `LDAPError` (8-case enum covering server errors, TLS, protocol, timeout, I/O).
+4. **Models** (`Sources/SwiftLDAP/Models/`) — `LDAPEntry` (dn + `[String: [Data]]` attributes), `LDAPAttribute`, `LDAPError` (8-case enum covering server errors, TLS, protocol, timeout, I/O), `LDAPServerFingerprint` (rootDSE-derived server info), `LDAPServerType` enum (`.openLDAP`, `.activeDirectory`, `.directoryServer389`, `.apacheDS`, `.unknown`).
 
-5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. Operations: `connect`, `simpleBind`, `search`, `searchStream`, `add`, `modify`, `delete`, `modifyDN`, `compare`, `whoAmI`, `extendedOperation`.
+5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. Operations: `connect`, `simpleBind`, `search`, `searchStream`, `add`, `modify`, `delete`, `modifyDN`, `compare`, `whoAmI`, `extendedOperation`, `serverFingerprint`.
 
 ### Key Patterns
 

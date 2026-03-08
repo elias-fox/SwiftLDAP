@@ -536,6 +536,29 @@ public actor LDAPClient {
         return ""
     }
 
+    // MARK: - Directory Information (RFC 4512 §5.1)
+
+    /// Queries the server's rootDSE and returns a structured fingerprint of its
+    /// capabilities and software identity.
+    ///
+    /// If the server restricts anonymous access to the rootDSE, returns a fingerprint
+    /// with `serverType == .unknown` and `rawEntry == nil` rather than throwing.
+    public func fingerprint() async throws -> LDAPServerFingerprint {
+        let entries = try await search(
+            baseDN: "",
+            scope: .baseObject,
+            filter: .present(attribute: "objectClass"),
+            attributes: [
+                "vendorName", "vendorVersion", "namingContexts",
+                "supportedExtension", "supportedControl",
+                "supportedFeatures", "supportedSASLMechanisms",
+                "supportedCapabilities",
+                "subschemaSubentry",
+            ]
+        )
+        return LDAPServerFingerprint(rootDSEEntries: entries)
+    }
+
     // MARK: - Convenience Methods
 
     /// Adds an attribute value to an existing entry.

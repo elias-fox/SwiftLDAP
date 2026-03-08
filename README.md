@@ -16,7 +16,7 @@ EVERYTHING BELOW IS CLAUDE OPUS 4.6
 
 A pure-Swift LDAPv3 client with async/await support. No external dependencies — built entirely on Foundation.
 
-Implements [RFC 4511](https://datatracker.ietf.org/doc/html/rfc4511) (LDAPv3 protocol), [RFC 4513](https://datatracker.ietf.org/doc/html/rfc4513) (authentication), [RFC 4515](https://datatracker.ietf.org/doc/html/rfc4515) (search filter syntax), and [RFC 4532](https://datatracker.ietf.org/doc/html/rfc4532) (Who Am I?).
+Implements [RFC 4511](https://datatracker.ietf.org/doc/html/rfc4511) (LDAPv3 protocol), [RFC 4513](https://datatracker.ietf.org/doc/html/rfc4513) (authentication), [RFC 4515](https://datatracker.ietf.org/doc/html/rfc4515) (search filter syntax), [RFC 4512](https://datatracker.ietf.org/doc/html/rfc4512) (rootDSE / server information), and [RFC 4532](https://datatracker.ietf.org/doc/html/rfc4532) (Who Am I?).
 
 ## Requirements
 
@@ -349,6 +349,36 @@ let match = try await client.compare(
     value: "Director"
 )
 // match == true if the attribute contains that value
+```
+
+## Server Fingerprinting (RFC 4512)
+
+Query the server's rootDSE to detect its software type and advertised capabilities:
+
+```swift
+let fp = try await client.serverFingerprint()
+
+print(fp.serverType)          // e.g. OpenLDAP, Active Directory, 389 Directory Server
+print(fp.vendorName ?? "n/a")
+print(fp.vendorVersion ?? "n/a")
+print(fp.namingContexts)      // ["dc=example,dc=com"]
+print(fp.supportedExtensions) // OID strings
+print(fp.supportedControls)   // OID strings
+print(fp.supportedFeatures)   // OID strings
+print(fp.supportedSASLMechanisms)
+print(fp.subschemaSubentry ?? "n/a")
+```
+
+Detection supports OpenLDAP, Active Directory, 389-DS, and ApacheDS. When a server restricts anonymous access to the rootDSE, `serverFingerprint()` returns a result with `serverType == .unknown` and `rawEntry == nil` rather than throwing.
+
+```swift
+switch fp.serverType {
+case .openLDAP:          print("OpenLDAP")
+case .activeDirectory:   print("Active Directory")
+case .directoryServer389: print("389-DS")
+case .apacheDS:          print("ApacheDS")
+case .unknown:           print("Unknown or inaccessible")
+}
 ```
 
 ## Extended Operations

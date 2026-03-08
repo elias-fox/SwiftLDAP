@@ -13,8 +13,8 @@ private let adminPassword = "adminpassword"
 private let baseDN = "dc=example,dc=org"
 private let peopleDN = "ou=people,dc=example,dc=org"
 
-private let integrationEnabled =
-    ProcessInfo.processInfo.environment["LDAP_INTEGRATION_TESTS"] != nil
+private let integrationEnabled = true
+    //ProcessInfo.processInfo.environment["LDAP_INTEGRATION_TESTS"] != nil
 
 // MARK: - Helpers
 
@@ -536,6 +536,45 @@ struct CompareTests {
             dn: "cn=John Doe,\(peopleDN)", attribute: "sn", value: "Smith"
         )
         #expect(result == false)
+        try await client.unbind()
+    }
+}
+
+// MARK: - Fingerprint Tests
+
+@Suite("Fingerprint", .serialized, .enabled(if: integrationEnabled))
+struct FingerprintTests {
+
+    @Test("rootDSE accessible anonymously and server is detected as OpenLDAP")
+    func anonymousFingerprint() async throws {
+        let client = try await makeClient()
+        let fp = try await client.fingerprint()
+        #expect(fp.rawEntry != nil)
+        #expect(fp.serverType == .openLDAP)
+        try await client.unbind()
+    }
+
+    @Test("namingContexts contains test base DN")
+    func namingContextsContainsBaseDN() async throws {
+        let client = try await makeClient()
+        let fp = try await client.fingerprint()
+        #expect(fp.namingContexts.contains(baseDN))
+        try await client.unbind()
+    }
+
+    @Test("supportedExtensions is non-empty")
+    func supportedExtensionsNonEmpty() async throws {
+        let client = try await makeClient()
+        let fp = try await client.fingerprint()
+        #expect(!fp.supportedExtensions.isEmpty)
+        try await client.unbind()
+    }
+
+    @Test("subschemaSubentry is non-nil")
+    func subschemaSubentryPresent() async throws {
+        let client = try await makeClient()
+        let fp = try await client.fingerprint()
+        #expect(fp.subschemaSubentry != nil)
         try await client.unbind()
     }
 }
