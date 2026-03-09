@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Always create a new git branch before making changes. Branch names should follow the pattern feature/<short-description>.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Always create a new git branch before making changes. Branch names should follow the pattern feature/<short-description>. Changes should include updates to README.md whenever the public API changes, and updates to CLAUDE.md whenever there is a structural change. Always check ALL unit tests after making changes.
 
 ## Project Overview
 
@@ -39,7 +39,7 @@ docker compose down -v
 
 4. **Models** (`Sources/SwiftLDAP/Models/`) — `LDAPEntry` (dn + `[String: [Data]]` attributes), `LDAPAttribute`, `LDAPError` (8-case enum covering server errors, TLS, protocol, timeout, I/O), `LDAPServerFingerprint` (rootDSE-derived server info), `LDAPServerType` enum (`.openLDAP`, `.activeDirectory`, `.directoryServer389`, `.apacheDS`, `.unknown`).
 
-5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. Operations: `connect`, `simpleBind`, `search`, `searchStream`, `add`, `modify`, `delete`, `modifyDN`, `compare`, `whoAmI`, `extendedOperation`, `serverFingerprint`.
+5. **Client** (`LDAPClient.swift`) — The sole public entry point. An `actor` that allocates message IDs, encodes requests via `LDAPCodec`, sends/receives via `LDAPConnection`, decodes responses, and returns typed results. Operations: `connect`, `simpleBind`, `search`, `searchStream`, `add`, `modify`, `delete`, `modifyDN`, `compare`, `whoAmI`, `extendedOperation`, `fingerprint`.
 
 ### Key Patterns
 
