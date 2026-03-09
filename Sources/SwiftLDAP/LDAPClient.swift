@@ -36,8 +36,13 @@ import Foundation
 /// ```
 public actor LDAPClient {
     private let connection: LDAPConnection
-    private let config: LDAPConnectionConfig
+    public let config: LDAPConnectionConfig
     private var nextMessageID: Int32 = 1
+    
+    public var host: String { config.host }
+    public var port: UInt16 { config.port }
+    public var security: LDAPSecurityMode { config.security }
+    public var tlsVerifyPeer: Bool { config.tlsVerifyPeer }
 
     /// Creates a new LDAP client.
     ///
